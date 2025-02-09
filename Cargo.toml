@@ -1,0 +1,28 @@
+[package]
+name = "foreigntech2"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+## Platform / Inputs
+winit = "0.30.9"
+
+## Graphics backend
+pollster = "0.4.0"
+wgpu = "24.0.1"
+
+## Debug UI
+egui = "0.31.0"
+egui-wgpu = "0.31.0"
+egui-winit = "0.31.0"
+
+## .obj Loader
+tobj = "4.0.3"
+
+## Utils
+bytemuck = { version = "1.21.0", features = ["derive"] }
+nalgebra = { version = "0.33.2", features = ["bytemuck"] }
+nd_iter = "0.0.4"
+asset_tree = { git = "https://github.com/Swiiz/asset_tree" }
+guillotiere = "0.6.2"
+image = { version = "0.25.5", features = ["png"], default-features = false }
