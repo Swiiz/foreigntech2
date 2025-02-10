@@ -53,7 +53,7 @@ impl Editor {
 
                 ui.collapsing("Projection", |ui| {
                     ui.label("Fov Y: ");
-                    ui.add(Slider::new(&mut proj.fovy_deg, 0.0..=180.0));
+                    ui.add(Slider::new(&mut proj.fov_deg, 0.0..=180.0));
                 });
             });
         });

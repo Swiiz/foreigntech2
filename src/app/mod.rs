@@ -51,7 +51,7 @@ impl App {
         let graphics = GraphicsCtx::new(window.clone());
         let proj = Projection {
             aspect_ratio: 1.0,
-            fovy_deg: 45.0,
+            fov_deg: 90.0,
         };
         let renderer = GlobalRenderer::new(&graphics);
         let editor_state = Editor::new(&window);
@@ -104,11 +104,11 @@ impl App {
     }
 
     fn resize_viewport(&mut self) {
-        self.graphics.resize(self.window.inner_size().into());
-        self.renderer.update_viewport_size(&self.graphics);
-
         self.proj.aspect_ratio = self.window.scale_factor() as f32;
         self.renderer.update_proj(&self.graphics, &self.proj);
+
+        self.graphics.resize(self.window.inner_size().into());
+        self.renderer.update_viewport_size(&self.graphics);
     }
 }
 
@@ -159,7 +159,7 @@ impl ApplicationHandler for AppRunner {
         }
     }
 
-    fn about_to_wait(&mut self, event_loop: &event_loop::ActiveEventLoop) {
+    fn about_to_wait(&mut self, _: &event_loop::ActiveEventLoop) {
         if let Some(app) = &mut self.0 {
             app.update();
         }

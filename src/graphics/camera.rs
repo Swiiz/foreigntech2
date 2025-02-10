@@ -4,7 +4,10 @@ use nalgebra::{
 
 use crate::constants;
 
-use super::{ctx::GraphicsCtx, utils::UniformBuffer};
+use super::{
+    ctx::GraphicsCtx,
+    utils::{fovy, UniformBuffer},
+};
 
 const OPENGL_TO_WGPU_MATRIX: Matrix4<f32> = Matrix4::new(
     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 1.0,
@@ -43,7 +46,7 @@ impl View {
 
 pub struct Projection {
     pub aspect_ratio: f32,
-    pub fovy_deg: f32,
+    pub fov_deg: f32,
 }
 
 impl Projection {
@@ -51,7 +54,7 @@ impl Projection {
         OPENGL_TO_WGPU_MATRIX
             * Perspective3::new(
                 self.aspect_ratio,
-                self.fovy_deg,
+                fovy(self.fov_deg, self.aspect_ratio),
                 constants::MODEL_ZNEAR,
                 constants::MODE_ZFAR,
             )

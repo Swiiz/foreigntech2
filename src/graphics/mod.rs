@@ -12,6 +12,7 @@ pub mod atlas;
 pub mod camera;
 pub mod color;
 pub mod ctx;
+pub mod light;
 pub mod model;
 pub mod utils;
 

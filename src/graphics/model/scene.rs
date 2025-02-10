@@ -55,7 +55,7 @@ impl ModelsBuffer {
             &ctx.device,
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Models Indirect Buffer"),
-                // SAFETY: `DrawIndexedIndirectArgs` is repr(C) and can be safely transmuted
+                // SAFETY: `DrawIndexedIndirectArgs` is repr(C) and made to be casted to `[u32; _]`
                 contents: unsafe {
                     std::slice::from_raw_parts(
                         indirect.as_ptr().cast(),
@@ -94,13 +94,11 @@ impl ModelsBuffer {
                                         mesh.positions[i * 3 + 1],
                                         mesh.positions[i * 3 + 2],
                                     ],
-                                    normal: [1.0, 1.0, 1.0],
-                                    /*
                                     tex_coords: [
                                         mesh.texcoords[i * 2],
                                         1.0 - mesh.texcoords[i * 2 + 1],
                                     ],
-                                    normal: [0.0, 0.0, 0.0], */
+                                    normal: [0.0, 0.0, 0.0],
                                 }
                             } else {
                                 Vertex {
@@ -109,12 +107,6 @@ impl ModelsBuffer {
                                         mesh.positions[i * 3 + 1],
                                         mesh.positions[i * 3 + 2],
                                     ],
-                                    normal: [
-                                        mesh.normals[i * 3],
-                                        mesh.normals[i * 3 + 1],
-                                        mesh.normals[i * 3 + 2],
-                                    ],
-                                    /*
                                     tex_coords: [
                                         mesh.texcoords[i * 2],
                                         1.0 - mesh.texcoords[i * 2 + 1],
@@ -123,7 +115,7 @@ impl ModelsBuffer {
                                         mesh.normals[i * 3],
                                         mesh.normals[i * 3 + 1],
                                         mesh.normals[i * 3 + 2],
-                                    ], */
+                                    ],
                                 }
                             }
                         }),
@@ -172,6 +164,7 @@ impl ModelsBuffer {
 pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
+    pub tex_coords: [f32; 2],
 }
 
 impl Vertex {
@@ -189,6 +182,11 @@ impl Vertex {
                     offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
                     shader_location: 1,
                     format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 6]>() as wgpu::BufferAddress,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x2,
                 },
             ],
         }
@@ -217,27 +215,27 @@ impl ModelInstance {
             attributes: &[
                 wgpu::VertexAttribute {
                     offset: 0,
-                    shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x4,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
                     shader_location: 3,
                     format: wgpu::VertexFormat::Float32x4,
                 },
                 wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
+                    offset: std::mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
                     shader_location: 4,
                     format: wgpu::VertexFormat::Float32x4,
                 },
                 wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
+                    offset: std::mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
                     shader_location: 5,
                     format: wgpu::VertexFormat::Float32x4,
                 },
                 wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
+                    offset: std::mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
                     shader_location: 6,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 16]>() as wgpu::BufferAddress,
+                    shader_location: 7,
                     format: wgpu::VertexFormat::Uint32,
                 },
             ],
@@ -245,12 +243,12 @@ impl ModelInstance {
     }
 }
 
-pub struct MaterialsBuffer {
+pub struct MaterialsUniform {
     pub storage_buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
 }
 
-impl MaterialsBuffer {
+impl MaterialsUniform {
     pub fn new(ctx: &GraphicsCtx, materials: &[Material]) -> Self {
         let storage_buffer = wgpu::util::DeviceExt::create_buffer_init(
             &ctx.device,

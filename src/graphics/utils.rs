@@ -1,5 +1,9 @@
 use crate::graphics::GraphicsCtx;
 
+pub fn fovy(fovx: f32, aspect: f32) -> f32 {
+    2.0 * (((fovx / 2.0).tan() / aspect).atan())
+}
+
 pub struct UniformBuffer<T> {
     pub inner: wgpu::Buffer,
     _marker: std::marker::PhantomData<T>,
@@ -36,11 +40,10 @@ pub struct TextureWrapper {
 impl TextureWrapper {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-    pub fn new_2d(
+    pub fn new_rgba_2d(
         label: &str,
         ctx: &GraphicsCtx,
         (width, height): (u32, u32),
-        component_count: u32,
         data: &[u8],
     ) -> Self {
         let texture_size = wgpu::Extent3d {
@@ -56,7 +59,7 @@ impl TextureWrapper {
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             label: Some(&format!("Diffuse Texture: {}", label)),
-            view_formats: &[ctx.surface_format],
+            view_formats: &[],
         });
 
         ctx.queue.write_texture(
@@ -69,7 +72,7 @@ impl TextureWrapper {
             data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(component_count * width),
+                bytes_per_row: Some(4 * width),
                 rows_per_image: Some(height),
             },
             texture_size,
@@ -81,8 +84,8 @@ impl TextureWrapper {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
             lod_min_clamp: 0.0,
             lod_max_clamp: 100.0,

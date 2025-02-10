@@ -47,3 +47,31 @@ impl Color3 {
         Self::new(l, l, l)
     }
 }
+
+impl std::ops::Mul<f32> for Color3 {
+    type Output = Color3;
+    fn mul(self, rhs: f32) -> Self::Output {
+        Color3::new(self.r * rhs, self.g * rhs, self.b * rhs)
+    }
+}
+
+impl std::ops::Mul<Color3> for f32 {
+    type Output = Color3;
+    fn mul(self, rhs: Color3) -> Self::Output {
+        Color3::new(self * rhs.r, self * rhs.g, self * rhs.b)
+    }
+}
+
+impl std::ops::Add for Color3 {
+    type Output = Color3;
+    fn add(self, rhs: Color3) -> Self::Output {
+        Color3::new(self.r + rhs.r, self.g + rhs.g, self.b + rhs.b)
+    }
+}
+
+impl std::ops::Sub for Color3 {
+    type Output = Color3;
+    fn sub(self, rhs: Color3) -> Self::Output {
+        Color3::new(self.r - rhs.r, self.g - rhs.g, self.b - rhs.b)
+    }
+}

@@ -3,26 +3,29 @@ use std::{
     io::{BufReader, Cursor},
 };
 
-use nalgebra::{Matrix4, Vector3};
+use nalgebra::{Matrix4, Point3, Vector3};
 use nd_iter::iter_3d;
 use wgpu::{include_wgsl, DepthStencilState, RenderBundle, RenderBundleDepthStencil};
 
 use crate::graphics::{
+    atlas::{atlas_uniform_bind_group_layout, AtlasPacker, AtlasUniform},
     camera::view_proj_bind_group_layout,
     color::Color3,
     ctx::GraphicsCtx,
+    light::{lights_buffer_bind_group_layout, Light, LightsBuffer},
     model::scene::{materials_buffer_bind_group_layout, Material},
     utils::TextureWrapper,
 };
 
 use super::{
-    scene::{MaterialsBuffer, ModelInstance, ModelsBuffer, Vertex},
+    scene::{MaterialsUniform, ModelInstance, ModelsBuffer, Vertex},
     EntityModel,
 };
 
 pub struct ModelRenderer {
     pub models: ModelsBuffer,
-    pub materials: MaterialsBuffer,
+    pub materials: MaterialsUniform,
+    pub atlas: AtlasUniform,
 
     pub render_bundle: RenderBundle,
 }
@@ -36,6 +39,8 @@ impl ModelRenderer {
                 bind_group_layouts: &[
                     &view_proj_bind_group_layout(ctx),
                     &materials_buffer_bind_group_layout(ctx),
+                    &atlas_uniform_bind_group_layout(ctx),
+                    &lights_buffer_bind_group_layout(ctx),
                 ],
                 push_constant_ranges: &[],
             });
@@ -90,13 +95,45 @@ impl ModelRenderer {
                 cache: None,
             });
 
-        let models = ModelsBuffer::new(ctx, &[load_test_model()], &[&STRESS_TEST_INSTANCES]);
+        let models = ModelsBuffer::new(ctx, &[load_test_model()], &[&DEFAULT_SINGLE_INSTANCE]);
         println!(
             "Models buffer configured to render {} triangles",
             models.triangles_count()
         );
 
-        let materials = MaterialsBuffer::new(ctx, &[Material::new(Color3::WHITE)]);
+        let atlas = {
+            let mut packer = AtlasPacker::new();
+            let image =
+                image::load_from_memory(include_bytes!("../../../assets/Astronaut_BaseColor.png"))
+                    .expect("Failed to load image")
+                    .to_rgba8();
+            packer.add_image(image);
+            packer.build_atlas(ctx)
+        };
+        let materials = MaterialsUniform::new(ctx, &[Material::new(Color3::WHITE)]);
+        let lights = LightsBuffer::new(
+            ctx,
+            &[
+                Light::Directional {
+                    direction: Vector3::new(0.0, -0.9, -0.3).normalize(),
+                    intensity: 0.8,
+                    color: Color3::WHITE,
+                }
+                .into(),
+                Light::Point {
+                    position: Point3::new(5.0, 5.0, 1.0),
+                    intensity: 2.0,
+                    color: Color3::CYAN,
+                }
+                .into(),
+                Light::Point {
+                    position: Point3::new(-5.0, 1.0, 1.0),
+                    intensity: 2.0,
+                    color: Color3::RED,
+                }
+                .into(),
+            ],
+        );
 
         let mut encoder =
             ctx.device
@@ -115,6 +152,8 @@ impl ModelRenderer {
         encoder.set_pipeline(&pipeline);
         encoder.set_bind_group(0, view_proj_bindgroup, &[]);
         encoder.set_bind_group(1, &materials.bind_group, &[]);
+        encoder.set_bind_group(2, &atlas.bind_group, &[]);
+        encoder.set_bind_group(3, &lights.bind_group, &[]);
         encoder.set_vertex_buffer(0, models.vertex_buffer.slice(..));
         encoder.set_vertex_buffer(1, models.instance_buffer.slice(..));
         encoder.set_index_buffer(models.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
@@ -127,6 +166,7 @@ impl ModelRenderer {
         Self {
             models,
             materials,
+            atlas,
             render_bundle,
         }
     }
