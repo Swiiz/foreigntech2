@@ -41,14 +41,14 @@ pub trait CommonBuffer: Sized {
 pub trait WriteBuffer {
     type Item;
 
-    fn write_array_offset(&self, ctx: &GraphicsCtx, data: &impl Borrow<[Self::Item]>, offset: u32);
-    fn write_offset(&self, ctx: &GraphicsCtx, data: &Self::Item, offset: u32);
+    fn write_array_at_index(&self, ctx: &GraphicsCtx, data: &impl Borrow<[Self::Item]>, index: u32);
+    fn write_at_index(&self, ctx: &GraphicsCtx, data: &Self::Item, index: u32);
 
     fn write(&self, ctx: &GraphicsCtx, data: &Self::Item) {
-        self.write_offset(ctx, data, 0);
+        self.write_at_index(ctx, data, 0);
     }
     fn write_array(&self, ctx: &GraphicsCtx, data: &impl Borrow<[Self::Item]>) {
-        self.write_array_offset(ctx, data, 0);
+        self.write_array_at_index(ctx, data, 0);
     }
 }
 
@@ -165,11 +165,11 @@ macro_rules! impl_buffer_write {
           impl<T: bytemuck::NoUninit> WriteBuffer for $name<T> {
               type Item = T;
 
-              fn write_offset(&self, ctx: &GraphicsCtx, data: &T, offset: u32) {
+              fn write_at_index(&self, ctx: &GraphicsCtx, data: &T, offset: u32) {
                   ctx.queue
                       .write_buffer(&self.inner, offset as u64 * std::mem::size_of::<T>() as u64, bytemuck::cast_slice(&[*data]));
               }
-              fn write_array_offset(&self, ctx: &GraphicsCtx, data: &impl Borrow<[T]>, offset: u32) {
+              fn write_array_at_index(&self, ctx: &GraphicsCtx, data: &impl Borrow<[T]>, offset: u32) {
                   ctx.queue.write_buffer(&self.inner, offset as u64 * std::mem::size_of::<T>() as u64, bytemuck::cast_slice(data.borrow()));
               }
           }
@@ -188,6 +188,39 @@ impl_buffer_write!(
 
 pub struct IndirectBuffer {
     pub inner: wgpu::Buffer,
+}
+
+impl IndirectBuffer {
+    const ARG_INSTANCE_COUNT_BYTE_OFFSET: u64 = 4;
+    const ARG_FIRST_INSTANCE_BYTE_OFFSET: u64 = 16;
+
+    pub fn write_instance_count_at_index(
+        &self,
+        ctx: &GraphicsCtx,
+        index: u32,
+        instance_count: u32,
+    ) {
+        ctx.queue.write_buffer(
+            &self.inner,
+            Self::ARG_INSTANCE_COUNT_BYTE_OFFSET
+                + index as u64 * Self::ARG_FIRST_INSTANCE_BYTE_OFFSET,
+            bytemuck::bytes_of(&instance_count),
+        );
+    }
+
+    pub fn write_first_instance_at_index(
+        &self,
+        ctx: &GraphicsCtx,
+        index: u32,
+        first_instance: u32,
+    ) {
+        ctx.queue.write_buffer(
+            &self.inner,
+            Self::ARG_FIRST_INSTANCE_BYTE_OFFSET
+                + index as u64 * Self::ARG_FIRST_INSTANCE_BYTE_OFFSET,
+            bytemuck::bytes_of(&first_instance),
+        );
+    }
 }
 
 impl CommonBuffer for IndirectBuffer {
@@ -290,6 +323,27 @@ impl CommonBuffer for IndirectBuffer {
     }
 }
 
+impl WriteBuffer for IndirectBuffer {
+    type Item = wgpu::util::DrawIndexedIndirectArgs;
+
+    fn write_array_at_index(
+        &self,
+        ctx: &GraphicsCtx,
+        data: &impl Borrow<[Self::Item]>,
+        offset: u32,
+    ) {
+        ctx.queue.write_buffer(
+            &self.inner,
+            offset as u64 * std::mem::size_of::<Self::Item>() as u64,
+            cast_iia(data.borrow()),
+        );
+    }
+
+    fn write_at_index(&self, ctx: &GraphicsCtx, data: &Self::Item, offset: u32) {
+        Self::write_array_at_index(self, ctx, &[*data], offset);
+    }
+}
+
 fn cast_iia(args: &[wgpu::util::DrawIndexedIndirectArgs]) -> &[u8] {
     // SAFETY: `DrawIndexedIndirectArgs` is repr(C) and made to be casted to `[u32; _]`
     unsafe {
@@ -344,6 +398,60 @@ impl<T: CommonBuffer> Growable<T> {
                     &new_buffer.inner(),
                     0,
                     self.capacity as u64 * std::mem::size_of::<T>() as u64,
+                );
+                ctx.queue.submit(Some(encoder.finish()));
+            }
+
+            *self = new_buffer;
+        }
+        return grow;
+    }
+
+    pub fn maybe_grow_around(
+        &mut self,
+        ctx: &GraphicsCtx,
+        index: u32,
+        required_size: usize,
+    ) -> bool {
+        let grow = required_size > self.capacity;
+        if grow {
+            // Compute new buffer size (double current size or required size)
+            let new_capacity = self.capacity.max(1) * 2;
+            let new_capacity = new_capacity.max(required_size);
+            let new_buffer = T::new_empty_vec(
+                {
+                    #[cfg(debug_assertions)]
+                    let l = self.label.as_str();
+                    #[cfg(not(debug_assertions))]
+                    let l = "";
+                    l
+                },
+                ctx,
+                new_capacity,
+            );
+
+            if self.capacity > 0 {
+                let index_offset = index as u64 * std::mem::size_of::<T::Item>() as u64;
+
+                let mut encoder =
+                    ctx.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("Growable Buffer Copy Encoder"),
+                        });
+                encoder.copy_buffer_to_buffer(
+                    &self.inner(),
+                    0,
+                    &new_buffer.inner(),
+                    0,
+                    index_offset,
+                );
+                encoder.copy_buffer_to_buffer(
+                    &self.inner(),
+                    index_offset,
+                    &new_buffer.inner(),
+                    (index as u64 + (required_size - self.capacity) as u64)
+                        * std::mem::size_of::<T::Item>() as u64,
+                    (self.capacity as u64 - index as u64) * std::mem::size_of::<T::Item>() as u64,
                 );
                 ctx.queue.submit(Some(encoder.finish()));
             }
@@ -412,7 +520,7 @@ impl<I: Default, T: CommonBuffer<Item = I> + WriteBuffer<Item = I>> Mapped<T> {
     pub fn apply_changes(&mut self, ctx: &GraphicsCtx) -> bool {
         let grown = self.inner.maybe_grow(ctx, self.ids.len() as usize);
         for (idx, data) in self.changes.drain(..) {
-            self.inner.write_offset(ctx, &data, idx);
+            self.inner.write_at_index(ctx, &data, idx);
         }
         grown
     }

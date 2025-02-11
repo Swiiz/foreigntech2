@@ -24,8 +24,7 @@ pub mod utils;
 
 pub struct GlobalRenderer {
     egui: EguiRenderer,
-    models: ModelRenderer,
-
+    pub models: ModelRenderer,
     pub lights: LightsBuffer,
 
     view: UniformBuffer<Matrix4<f32>>,
@@ -109,7 +108,7 @@ impl GlobalRenderer {
     }
 
     pub fn submit(&mut self, ctx: &GraphicsCtx, render_state: RenderData) {
-        if self.lights.apply_changes(ctx) {
+        if self.lights.apply_changes(ctx) || self.models.apply_changes(ctx) {
             self.models
                 .recreate_render_bundle(ctx, &self.view_proj_bindgroup, &self.lights);
         }

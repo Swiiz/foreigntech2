@@ -3,12 +3,12 @@ use std::ops::RangeInclusive;
 use egui::{Color32, Slider};
 pub use egui_winit::State as EguiWinitState;
 use light::LightEditor;
-use nalgebra::{Point3, Vector3};
+use nalgebra::{Matrix4, Point3, Vector3};
 use winit::window::Window;
 
 use crate::{
     game::GameState,
-    graphics::{camera::Projection, GlobalRenderer},
+    graphics::{camera::Projection, ctx::GraphicsCtx, model::scene::ModelInstance, GlobalRenderer},
 };
 
 pub mod light;
@@ -18,6 +18,8 @@ pub struct Editor {
     pub gui_ctx: egui::Context,
 
     pub light_editor: LightEditor,
+
+    pub new_inst_pos: Point3<f32>,
 }
 
 impl Editor {
@@ -37,12 +39,14 @@ impl Editor {
             gui_state,
             gui_ctx,
             light_editor,
+            new_inst_pos: Default::default(),
         }
     }
 
     pub fn run(
         &mut self,
         renderer: &mut GlobalRenderer,
+        gctx: &GraphicsCtx,
         egui_input: egui::RawInput,
         game_state: &mut GameState,
         proj: &mut Projection,
@@ -70,7 +74,23 @@ impl Editor {
                     ui.add(Slider::new(&mut proj.fov_deg, 0.0..=180.0));
                 });
 
-                ui.collapsing("Lights", |ui| self.light_editor.ui(ui, renderer))
+                ui.collapsing("Lights", |ui| self.light_editor.ui(ui, renderer));
+
+                ui.collapsing("Instances", |ui| {
+                    point_slider(ui, &mut self.new_inst_pos, -10.0..=10.);
+                    if ui.button("Push").clicked() {
+                        renderer.models.models.add_instance(
+                            gctx,
+                            0,
+                            0,
+                            &ModelInstance {
+                                transform: Matrix4::new_translation(&self.new_inst_pos.coords)
+                                    .into(),
+                                material_id: 0,
+                            },
+                        );
+                    }
+                })
             });
         });
 

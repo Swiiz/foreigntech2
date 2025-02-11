@@ -3,11 +3,9 @@ use std::{
     io::{BufReader, Cursor},
 };
 
-use nalgebra::{Matrix4, Point3, Vector3};
+use nalgebra::{Matrix4, Vector3};
 use nd_iter::iter_3d;
-use wgpu::{
-    core::pipeline, include_wgsl, DepthStencilState, RenderBundle, RenderBundleDepthStencil,
-};
+use wgpu::{include_wgsl, DepthStencilState, RenderBundle, RenderBundleDepthStencil};
 
 use crate::graphics::{
     atlas::{atlas_uniform_bind_group_layout, AtlasPacker, AtlasUniform},
@@ -15,13 +13,13 @@ use crate::graphics::{
     camera::view_proj_bind_group_layout,
     color::Color3,
     ctx::GraphicsCtx,
-    light::{lights_buffer_bind_group_layout, Light, LightsBuffer},
+    light::{lights_buffer_bind_group_layout, LightsBuffer},
     model::scene::{materials_buffer_bind_group_layout, Material},
     utils::TextureWrapper,
 };
 
 use super::{
-    scene::{MaterialsBuffer, ModelInstance, ModelsBuffer, Vertex},
+    scene::{MaterialsBuffer, ModelInstance, ModelVertex, ModelsBuffer},
     EntityModel,
 };
 
@@ -65,7 +63,7 @@ impl ModelRenderer {
                 vertex: wgpu::VertexState {
                     module: &shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[Vertex::buffer_desc(), ModelInstance::buffer_desc()],
+                    buffers: &[ModelVertex::buffer_desc(), ModelInstance::buffer_desc()],
                     compilation_options: Default::default(),
                 },
                 primitive: wgpu::PrimitiveState {
@@ -105,8 +103,9 @@ impl ModelRenderer {
 
         let models = ModelsBuffer::new(
             ctx,
-            [(&load_test_model(), vec![STRESS_TEST_INSTANCES.to_vec()])],
+            [(&load_test_model(), vec![DEFAULT_SINGLE_INSTANCE.to_vec()])],
         );
+
         println!(
             "Models buffer configured to render {} triangles",
             models.triangles_count()
@@ -157,6 +156,10 @@ impl ModelRenderer {
             view_proj_bindgroup,
             lights,
         );
+    }
+
+    pub fn apply_changes(&mut self, ctx: &GraphicsCtx) -> bool {
+        self.models.apply_changes(ctx)
     }
 }
 
