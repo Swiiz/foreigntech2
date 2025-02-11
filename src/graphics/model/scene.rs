@@ -1,19 +1,38 @@
-use std::f32::consts::E;
-
 use nalgebra::Matrix4;
-use tobj::{Mesh, Model};
+use wgpu::util::DrawIndexedIndirectArgs;
 
-use crate::graphics::{color::Color3, ctx::GraphicsCtx, utils::TextureWrapper};
+use crate::{
+    graphics::{
+        buffer::{
+            CommonBuffer, Growable, IndexBuffer, IndirectBuffer, InstanceBuffer, Mapped,
+            StorageBuffer, VertexBuffer,
+        },
+        color::Color3,
+        ctx::GraphicsCtx,
+    },
+    utils::IdAllocator,
+};
 
 use super::EntityModel;
 
+pub struct ModelsAllocator {}
+
 pub struct ModelsBuffer {
-    pub(super) vertex_buffer: wgpu::Buffer,
-    pub(super) index_buffer: wgpu::Buffer,
-    pub(super) instance_buffer: wgpu::Buffer,
-    pub(super) indirect_buffer: wgpu::Buffer,
+    pub(super) vertex_buffer: VertexBuffer<Vertex>,
+    pub(super) index_buffer: IndexBuffer<u16>,
+    pub(super) instance_buffer: Growable<InstanceBuffer<ModelInstance>>,
+    pub(super) indirect_buffer: Growable<IndirectBuffer>,
+
+    instances_ids: Vec<Vec<IdAllocator<u16>>>,
+    meshes_count: Vec<u16>,
 
     triangles_count: u32,
+}
+
+pub struct ModelInstanceId {
+    pub model_id: u16,
+    pub mesh_id: u16,
+    pub instance_id: u16,
 }
 
 impl ModelsBuffer {
@@ -22,140 +41,186 @@ impl ModelsBuffer {
         vertices: &[Vertex],
         indices: &[u16],
         instances: &[ModelInstance],
-        indirect: &[wgpu::util::DrawIndexedIndirectArgs],
+        instances_ids: Vec<Vec<IdAllocator<u16>>>,
+        meshes_count: Vec<u16>,
+        indirects: &[wgpu::util::DrawIndexedIndirectArgs],
     ) -> Self {
-        let vertex_buffer = wgpu::util::DeviceExt::create_buffer_init(
-            &ctx.device,
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Models Vertex Buffer"),
-                contents: bytemuck::cast_slice(&vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            },
-        );
-
-        let index_buffer = wgpu::util::DeviceExt::create_buffer_init(
-            &ctx.device,
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Models Index Buffer"),
-                contents: bytemuck::cast_slice(&indices),
-                usage: wgpu::BufferUsages::INDEX,
-            },
-        );
-
-        let instance_buffer = wgpu::util::DeviceExt::create_buffer_init(
-            &ctx.device,
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Models Instance Buffer"),
-                contents: bytemuck::cast_slice(&instances),
-                usage: wgpu::BufferUsages::VERTEX,
-            },
-        );
-
-        let indirect_buffer = wgpu::util::DeviceExt::create_buffer_init(
-            &ctx.device,
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Models Indirect Buffer"),
-                // SAFETY: `DrawIndexedIndirectArgs` is repr(C) and made to be casted to `[u32; _]`
-                contents: unsafe {
-                    std::slice::from_raw_parts(
-                        indirect.as_ptr().cast(),
-                        indirect.len() * std::mem::size_of::<wgpu::util::DrawIndexedIndirectArgs>(),
-                    )
-                },
-                usage: wgpu::BufferUsages::INDIRECT,
-            },
-        );
+        let vertex_buffer = VertexBuffer::new_const_array("Models vertices", ctx, vertices);
+        let index_buffer = IndexBuffer::new_const_array("Models indices", ctx, indices);
+        let instance_buffer = InstanceBuffer::new_vec("Models instances", ctx, instances);
+        let indirect_buffer = IndirectBuffer::new_vec("Models call params", ctx, indirects);
 
         Self {
             vertex_buffer,
             index_buffer,
             instance_buffer,
+            instances_ids,
+            meshes_count,
             indirect_buffer,
             triangles_count: indices.len() as u32 / 3 * instances.len() as u32,
         }
     }
 
-    //TODO: make instancing dynamic
-    pub fn new(ctx: &GraphicsCtx, models: &[EntityModel], instances: &[&[ModelInstance]]) -> Self {
+    pub fn new<'a>(
+        ctx: &GraphicsCtx,
+        iter: impl IntoIterator<Item = (&'a EntityModel, Vec<Vec<ModelInstance>>)>,
+    ) -> Self {
         let mut idx_counter = 0;
         let mut inst_counter = 0;
 
-        let (vertices, indices, indirect) = models
+        struct PerModel<T> {
+            meshes: T,
+        }
+
+        struct PerMesh<T> {
+            geometry: T,
+            indirect: DrawIndexedIndirectArgs,
+            instances: Vec<ModelInstance>,
+            instances_ids: IdAllocator<u16>,
+        }
+
+        //TODO: per mesh instancing instead of per model
+        let (vertices, indices, indirect, instances, instances_ids, meshes_count) = iter
             .into_iter()
-            .zip(instances)
             .map(|(EntityModel { meshes }, instances)| {
-                let res = meshes.into_iter().map(move |mesh| {
-                    (
-                        (0..mesh.positions.len() / 3).map(|i| {
-                            if mesh.normals.is_empty() {
-                                Vertex {
-                                    position: [
-                                        mesh.positions[i * 3],
-                                        mesh.positions[i * 3 + 1],
-                                        mesh.positions[i * 3 + 2],
-                                    ],
-                                    tex_coords: [
-                                        mesh.texcoords[i * 2],
-                                        1.0 - mesh.texcoords[i * 2 + 1],
-                                    ],
-                                    normal: [0.0, 0.0, 0.0],
+                let mesh_count = meshes.len() as u16;
+                let meshes = meshes
+                    .into_iter()
+                    .zip(instances)
+                    .map(move |(mesh, instances)| {
+                        let geometry = (
+                            (0..mesh.positions.len() / 3).map(|i| {
+                                if mesh.normals.is_empty() {
+                                    Vertex {
+                                        position: [
+                                            mesh.positions[i * 3],
+                                            mesh.positions[i * 3 + 1],
+                                            mesh.positions[i * 3 + 2],
+                                        ],
+                                        tex_coords: [
+                                            mesh.texcoords[i * 2],
+                                            1.0 - mesh.texcoords[i * 2 + 1],
+                                        ],
+                                        normal: [0.0, 0.0, 0.0],
+                                    }
+                                } else {
+                                    Vertex {
+                                        position: [
+                                            mesh.positions[i * 3],
+                                            mesh.positions[i * 3 + 1],
+                                            mesh.positions[i * 3 + 2],
+                                        ],
+                                        tex_coords: [
+                                            mesh.texcoords[i * 2],
+                                            1.0 - mesh.texcoords[i * 2 + 1],
+                                        ],
+                                        normal: [
+                                            mesh.normals[i * 3],
+                                            mesh.normals[i * 3 + 1],
+                                            mesh.normals[i * 3 + 2],
+                                        ],
+                                    }
                                 }
-                            } else {
-                                Vertex {
-                                    position: [
-                                        mesh.positions[i * 3],
-                                        mesh.positions[i * 3 + 1],
-                                        mesh.positions[i * 3 + 2],
-                                    ],
-                                    tex_coords: [
-                                        mesh.texcoords[i * 2],
-                                        1.0 - mesh.texcoords[i * 2 + 1],
-                                    ],
-                                    normal: [
-                                        mesh.normals[i * 3],
-                                        mesh.normals[i * 3 + 1],
-                                        mesh.normals[i * 3 + 2],
-                                    ],
-                                }
-                            }
-                        }),
-                        mesh.indices.iter().map(|i| *i as u16),
-                        wgpu::util::DrawIndexedIndirectArgs {
+                            }),
+                            mesh.indices.iter().map(|i| *i as u16),
+                        );
+
+                        let indirect = wgpu::util::DrawIndexedIndirectArgs {
                             index_count: mesh.indices.len() as u32,
                             instance_count: instances.len() as u32,
                             first_index: 0,
-                            base_vertex: {
-                                let i = idx_counter as i32;
-                                idx_counter += mesh.indices.len() as u32;
-                                i
-                            },
+                            base_vertex: idx_counter as i32,
                             first_instance: inst_counter,
-                        },
-                    )
-                });
+                        };
 
-                inst_counter += instances.len() as u32;
+                        idx_counter += mesh.indices.len() as u32;
+                        inst_counter += instances.len() as u32;
 
-                res
+                        PerMesh {
+                            geometry,
+                            indirect,
+                            //TODO: change for new instancing
+                            instances_ids: IdAllocator::new_packed(instances.len() as u16),
+                            instances,
+                        }
+                    });
+
+                PerModel { meshes }
             })
-            .flatten()
             .fold(
                 Default::default(),
-                |(mut a, mut b, mut c): (Vec<_>, Vec<_>, Vec<_>), (x, y, z)| {
-                    a.extend(x);
-                    b.extend(y);
-                    c.push(z);
-                    (a, b, c)
+                |(
+                    mut vertices,
+                    mut indices,
+                    mut indirect,
+                    mut instances,
+                    mut instances_ids,
+                    mut meshes_count,
+                ): (Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>),
+                 model| {
+                    meshes_count.push(model.meshes.len() as u16);
+
+                    let mut meshes_instance_ids = Vec::with_capacity(model.meshes.len());
+                    for mesh in model.meshes {
+                        vertices.extend(mesh.geometry.0);
+                        indices.extend(mesh.geometry.1);
+                        instances.extend(mesh.instances);
+                        indirect.push(mesh.indirect);
+                        meshes_instance_ids.push(mesh.instances_ids);
+                    }
+                    instances_ids.push(meshes_instance_ids);
+
+                    (
+                        vertices,
+                        indices,
+                        indirect,
+                        instances,
+                        instances_ids,
+                        meshes_count,
+                    )
                 },
             );
 
-        let instances: Vec<_> = instances.iter().map(|i| *i).flatten().map(|i| *i).collect();
-
-        Self::from_raw(ctx, &vertices, &indices, &instances, &indirect)
+        Self::from_raw(
+            ctx,
+            &vertices,
+            &indices,
+            &instances,
+            instances_ids,
+            meshes_count,
+            &indirect,
+        )
     }
 
     pub fn triangles_count(&self) -> u32 {
         self.triangles_count
+    }
+
+    pub fn add_instance(
+        &mut self,
+        model_id: u16,
+        mesh_id: u16,
+        instance: &ModelInstance,
+    ) -> ModelInstanceId {
+        let instance_id = self.instances_ids[model_id as usize][mesh_id as usize].allocate();
+        // FRAGMENTATION OF IDS IS NOT ALLOWED!
+        // Array of SlotAllocator
+        //TODO: insert into buffer
+        ModelInstanceId {
+            model_id,
+            mesh_id,
+            instance_id,
+        }
+    }
+
+    pub fn remove_instance(&mut self, id: ModelInstanceId) {
+        self.instances_ids[id.model_id as usize][id.mesh_id as usize].free(id.instance_id);
+        //TODO: remove from buffer
+    }
+
+    pub fn apply_changes(&mut self, ctx: &GraphicsCtx) -> bool {
+        //Todo: self.instance_buffer.maybe_grow(ctx, required_size) || self.indirect_buffer.maybe_grow(ctx, required_size)
+        false
     }
 }
 
@@ -243,27 +308,20 @@ impl ModelInstance {
     }
 }
 
-pub struct MaterialsUniform {
-    pub storage_buffer: wgpu::Buffer,
+pub struct MaterialsBuffer {
+    pub storage_buffer: StorageBuffer<Material>,
     pub bind_group: wgpu::BindGroup,
 }
 
-impl MaterialsUniform {
+impl MaterialsBuffer {
     pub fn new(ctx: &GraphicsCtx, materials: &[Material]) -> Self {
-        let storage_buffer = wgpu::util::DeviceExt::create_buffer_init(
-            &ctx.device,
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Materials Storage Buffer"),
-                contents: bytemuck::cast_slice(materials),
-                usage: wgpu::BufferUsages::STORAGE,
-            },
-        );
+        let storage_buffer = StorageBuffer::new_array("Materials", ctx, materials);
 
         let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &materials_buffer_bind_group_layout(ctx),
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: storage_buffer.as_entire_binding(),
+                resource: storage_buffer.binding(),
             }],
             label: Some("Materials Bind Group"),
         });

@@ -4,33 +4,6 @@ pub fn fovy(fovx: f32, aspect: f32) -> f32 {
     2.0 * (((fovx / 2.0).tan() / aspect).atan())
 }
 
-pub struct UniformBuffer<T> {
-    pub inner: wgpu::Buffer,
-    _marker: std::marker::PhantomData<T>,
-}
-
-impl<T: bytemuck::NoUninit> UniformBuffer<T> {
-    pub fn new(label: &str, ctx: &GraphicsCtx, data: &T) -> Self {
-        let buffer = wgpu::util::DeviceExt::create_buffer_init(
-            &ctx.device,
-            &wgpu::util::BufferInitDescriptor {
-                label: Some(&format!("Uniform Buffer: {}", label)),
-                contents: bytemuck::cast_slice(&[*data]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            },
-        );
-        Self {
-            inner: buffer,
-            _marker: std::marker::PhantomData,
-        }
-    }
-
-    pub fn update(&self, ctx: &GraphicsCtx, data: &T) -> () {
-        ctx.queue
-            .write_buffer(&self.inner, 0, bytemuck::cast_slice(&[*data]));
-    }
-}
-
 pub struct TextureWrapper {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,

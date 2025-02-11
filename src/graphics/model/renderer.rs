@@ -5,10 +5,13 @@ use std::{
 
 use nalgebra::{Matrix4, Point3, Vector3};
 use nd_iter::iter_3d;
-use wgpu::{include_wgsl, DepthStencilState, RenderBundle, RenderBundleDepthStencil};
+use wgpu::{
+    core::pipeline, include_wgsl, DepthStencilState, RenderBundle, RenderBundleDepthStencil,
+};
 
 use crate::graphics::{
     atlas::{atlas_uniform_bind_group_layout, AtlasPacker, AtlasUniform},
+    buffer::CommonBuffer,
     camera::view_proj_bind_group_layout,
     color::Color3,
     ctx::GraphicsCtx,
@@ -18,20 +21,25 @@ use crate::graphics::{
 };
 
 use super::{
-    scene::{MaterialsUniform, ModelInstance, ModelsBuffer, Vertex},
+    scene::{MaterialsBuffer, ModelInstance, ModelsBuffer, Vertex},
     EntityModel,
 };
 
 pub struct ModelRenderer {
     pub models: ModelsBuffer,
-    pub materials: MaterialsUniform,
+    pub materials: MaterialsBuffer,
     pub atlas: AtlasUniform,
 
+    pipeline: wgpu::RenderPipeline,
     pub render_bundle: RenderBundle,
 }
 
 impl ModelRenderer {
-    pub fn new(ctx: &GraphicsCtx, view_proj_bindgroup: &wgpu::BindGroup) -> Self {
+    pub fn new(
+        ctx: &GraphicsCtx,
+        view_proj_bindgroup: &wgpu::BindGroup,
+        lights: &LightsBuffer,
+    ) -> Self {
         let pipeline_layout = ctx
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -95,7 +103,10 @@ impl ModelRenderer {
                 cache: None,
             });
 
-        let models = ModelsBuffer::new(ctx, &[load_test_model()], &[&DEFAULT_SINGLE_INSTANCE]);
+        let models = ModelsBuffer::new(
+            ctx,
+            [(&load_test_model(), vec![STRESS_TEST_INSTANCES.to_vec()])],
+        );
         println!(
             "Models buffer configured to render {} triangles",
             models.triangles_count()
@@ -110,66 +121,82 @@ impl ModelRenderer {
             packer.add_image(image);
             packer.build_atlas(ctx)
         };
-        let materials = MaterialsUniform::new(ctx, &[Material::new(Color3::WHITE)]);
-        let lights = LightsBuffer::new(
+        let materials = MaterialsBuffer::new(ctx, &[Material::new(Color3::WHITE)]);
+
+        let render_bundle = create_models_render_bundle(
+            &pipeline,
+            &models,
+            &materials,
+            &atlas,
             ctx,
-            &[
-                Light::Directional {
-                    direction: Vector3::new(0.0, -0.9, -0.3).normalize(),
-                    intensity: 0.8,
-                    color: Color3::WHITE,
-                }
-                .into(),
-                Light::Point {
-                    position: Point3::new(5.0, 5.0, 1.0),
-                    intensity: 2.0,
-                    color: Color3::CYAN,
-                }
-                .into(),
-                Light::Point {
-                    position: Point3::new(-5.0, 1.0, 1.0),
-                    intensity: 2.0,
-                    color: Color3::RED,
-                }
-                .into(),
-            ],
+            view_proj_bindgroup,
+            lights,
         );
-
-        let mut encoder =
-            ctx.device
-                .create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
-                    label: None,
-                    color_formats: &[Some(ctx.surface_format)],
-                    depth_stencil: Some(RenderBundleDepthStencil {
-                        format: TextureWrapper::DEPTH_FORMAT,
-                        depth_read_only: false,
-                        stencil_read_only: true,
-                    }),
-                    sample_count: 1,
-                    multiview: None,
-                });
-
-        encoder.set_pipeline(&pipeline);
-        encoder.set_bind_group(0, view_proj_bindgroup, &[]);
-        encoder.set_bind_group(1, &materials.bind_group, &[]);
-        encoder.set_bind_group(2, &atlas.bind_group, &[]);
-        encoder.set_bind_group(3, &lights.bind_group, &[]);
-        encoder.set_vertex_buffer(0, models.vertex_buffer.slice(..));
-        encoder.set_vertex_buffer(1, models.instance_buffer.slice(..));
-        encoder.set_index_buffer(models.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-        encoder.draw_indexed_indirect(&models.indirect_buffer, 0);
-
-        let render_bundle = encoder.finish(&wgpu::RenderBundleDescriptor {
-            label: Some("model_render_bundle"),
-        });
 
         Self {
             models,
             materials,
             atlas,
+            pipeline,
             render_bundle,
         }
     }
+
+    pub fn recreate_render_bundle(
+        &mut self,
+        ctx: &GraphicsCtx,
+        view_proj_bindgroup: &wgpu::BindGroup,
+        lights: &LightsBuffer,
+    ) {
+        self.render_bundle = create_models_render_bundle(
+            &self.pipeline,
+            &self.models,
+            &self.materials,
+            &self.atlas,
+            ctx,
+            view_proj_bindgroup,
+            lights,
+        );
+    }
+}
+
+fn create_models_render_bundle(
+    pipeline: &wgpu::RenderPipeline,
+    models: &ModelsBuffer,
+    materials: &MaterialsBuffer,
+    atlas: &AtlasUniform,
+
+    ctx: &GraphicsCtx,
+    view_proj_bindgroup: &wgpu::BindGroup,
+    lights: &LightsBuffer,
+) -> RenderBundle {
+    let mut encoder =
+        ctx.device
+            .create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
+                label: None,
+                color_formats: &[Some(ctx.surface_format)],
+                depth_stencil: Some(RenderBundleDepthStencil {
+                    format: TextureWrapper::DEPTH_FORMAT,
+                    depth_read_only: false,
+                    stencil_read_only: true,
+                }),
+                sample_count: 1,
+                multiview: None,
+            });
+
+    encoder.set_pipeline(&pipeline);
+    encoder.set_bind_group(0, view_proj_bindgroup, &[]);
+    encoder.set_bind_group(1, &materials.bind_group, &[]);
+    encoder.set_bind_group(2, &atlas.bind_group, &[]);
+    encoder.set_bind_group(3, &lights.bind_group, &[]);
+    encoder.set_vertex_buffer(0, models.vertex_buffer.as_slice());
+    encoder.set_vertex_buffer(1, models.instance_buffer.as_slice());
+    encoder.set_index_buffer(models.index_buffer.as_slice(), wgpu::IndexFormat::Uint16);
+    encoder.draw_indexed_indirect(&models.indirect_buffer.inner(), 0);
+
+    encoder.finish(&wgpu::RenderBundleDescriptor {
+        label: Some("model_render_bundle"),
+    })
 }
 
 const DEFAULT_SINGLE_INSTANCE: &[ModelInstance] = &[ModelInstance {

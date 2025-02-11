@@ -46,6 +46,10 @@ impl Color3 {
     pub const fn splat(l: f32) -> Self {
         Self::new(l, l, l)
     }
+
+    pub fn array_mut(&mut self) -> &mut [f32; 3] {
+        unsafe { std::mem::transmute(self) }
+    }
 }
 
 impl std::ops::Mul<f32> for Color3 {

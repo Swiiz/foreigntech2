@@ -6,10 +6,19 @@ use wgpu::util::DeviceExt;
 
 use crate::graphics::{ctx::GraphicsCtx, utils::TextureWrapper};
 
+use super::buffer::{CommonBuffer, StorageBuffer};
+
 pub struct AtlasPacker {
     atlas: AtlasAllocator,
     images: HashMap<AllocId, RgbaImage>,
     dims: (u32, u32),
+}
+
+pub struct AtlasUniform {
+    packer: AtlasAllocator,
+    texture: TextureWrapper,
+    uvs_buffer: StorageBuffer<[[f32; 2]; 2]>,
+    pub bind_group: wgpu::BindGroup,
 }
 
 impl AtlasPacker {
@@ -60,13 +69,7 @@ impl AtlasPacker {
         let texture =
             TextureWrapper::new_rgba_2d("Models Atlas", ctx, self.dims, texture.as_bytes());
 
-        let uvs_buffer = ctx
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Atlas UVs"),
-                contents: bytemuck::cast_slice(&uvs),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            });
+        let uvs_buffer = StorageBuffer::new_const_array("Atlas uvs", ctx, uvs);
 
         let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &atlas_uniform_bind_group_layout(ctx),
@@ -81,7 +84,7 @@ impl AtlasPacker {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: uvs_buffer.as_entire_binding(),
+                    resource: uvs_buffer.binding(),
                 },
             ],
             label: Some("Atlas Bind Group"),
@@ -94,13 +97,6 @@ impl AtlasPacker {
             bind_group,
         }
     }
-}
-
-pub struct AtlasUniform {
-    packer: AtlasAllocator,
-    texture: TextureWrapper,
-    uvs_buffer: wgpu::Buffer,
-    pub bind_group: wgpu::BindGroup,
 }
 
 pub fn atlas_uniform_bind_group_layout(ctx: &GraphicsCtx) -> wgpu::BindGroupLayout {

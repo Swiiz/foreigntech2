@@ -1,14 +1,20 @@
+use std::cell::LazyCell;
+
+use buffer::{CommonBuffer, UniformBuffer, WriteBuffer};
 use camera::{view_proj_bindgroup, Projection, View};
+use color::Color3;
 use ctx::{Frame, GraphicsCtx};
 
 pub use egui::FullOutput as EguiOutput;
 pub use egui_wgpu::Renderer as EguiRenderer;
 use egui_wgpu::ScreenDescriptor;
+use light::{Light, LightsBuffer, RawLight};
 use model::renderer::ModelRenderer;
-use nalgebra::Matrix4;
-use utils::{TextureWrapper, UniformBuffer};
+use nalgebra::{Matrix4, Point3, Vector3};
+use utils::TextureWrapper;
 
 pub mod atlas;
+pub mod buffer;
 pub mod camera;
 pub mod color;
 pub mod ctx;
@@ -20,8 +26,11 @@ pub struct GlobalRenderer {
     egui: EguiRenderer,
     models: ModelRenderer,
 
+    pub lights: LightsBuffer,
+
     view: UniformBuffer<Matrix4<f32>>,
     proj: UniformBuffer<Matrix4<f32>>,
+    view_proj_bindgroup: wgpu::BindGroup,
 
     depth_texture: TextureWrapper,
 }
@@ -34,11 +43,36 @@ pub struct RenderData {
     pub egui_output: EguiOutput,
 }
 
+const TEST_LIGHTS: LazyCell<[RawLight; 3]> = LazyCell::new(|| {
+    [
+        Light::Directional {
+            direction: Vector3::new(0.0, -0.9, -0.3).normalize(),
+            intensity: 1.5,
+            color: Color3::WHITE,
+        }
+        .into(),
+        Light::Point {
+            position: Point3::new(5.0, 5.0, 1.0),
+            intensity: 5.0,
+            color: Color3::CYAN,
+        }
+        .into(),
+        Light::Point {
+            position: Point3::new(-5.0, 1.0, 1.0),
+            intensity: 5.0,
+            color: Color3::RED,
+        }
+        .into(),
+    ]
+});
+
 impl GlobalRenderer {
     pub fn new(ctx: &GraphicsCtx) -> Self {
         let view = UniformBuffer::new("view", ctx, &Matrix4::identity());
         let proj = UniformBuffer::new("camera", ctx, &Matrix4::identity());
         let view_proj_bindgroup = view_proj_bindgroup(ctx, &view, &proj);
+
+        let lights = LightsBuffer::new(ctx, TEST_LIGHTS.as_ref());
 
         let depth_texture = TextureWrapper::new_depth("3d", ctx, ctx.viewport_size);
 
@@ -49,13 +83,15 @@ impl GlobalRenderer {
             1,
             false,
         );
-        let models = ModelRenderer::new(ctx, &view_proj_bindgroup);
+        let models = ModelRenderer::new(ctx, &view_proj_bindgroup, &lights);
 
         Self {
             egui,
             models,
             view,
             proj,
+            view_proj_bindgroup,
+            lights,
             depth_texture,
         }
     }
@@ -65,14 +101,19 @@ impl GlobalRenderer {
     }
 
     pub fn update_view(&self, ctx: &GraphicsCtx, view: &View) -> () {
-        self.view.update(ctx, &view.compute_matrix());
+        self.view.write(ctx, &view.compute_matrix());
     }
 
     pub fn update_proj(&self, ctx: &GraphicsCtx, proj: &Projection) -> () {
-        self.proj.update(ctx, &proj.compute_matrix());
+        self.proj.write(ctx, &proj.compute_matrix());
     }
 
     pub fn submit(&mut self, ctx: &GraphicsCtx, render_state: RenderData) {
+        if self.lights.apply_changes(ctx) {
+            self.models
+                .recreate_render_bundle(ctx, &self.view_proj_bindgroup, &self.lights);
+        }
+
         if let Some(mut frame) = ctx.next_frame() {
             let mut render_pass =
                 clear_color_render_pass(&mut frame, Some(&self.depth_texture)).forget_lifetime();

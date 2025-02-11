@@ -2,6 +2,7 @@ pub mod app;
 pub mod constants;
 pub mod game;
 pub mod graphics;
+pub mod utils;
 
 asset_tree::asset_tree!(assets {});
 

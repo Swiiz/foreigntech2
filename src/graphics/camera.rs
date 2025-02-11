@@ -5,8 +5,9 @@ use nalgebra::{
 use crate::constants;
 
 use super::{
+    buffer::{CommonBuffer, UniformBuffer},
     ctx::GraphicsCtx,
-    utils::{fovy, UniformBuffer},
+    utils::fovy,
 };
 
 const OPENGL_TO_WGPU_MATRIX: Matrix4<f32> = Matrix4::new(
@@ -101,11 +102,11 @@ pub fn view_proj_bindgroup(
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
-                resource: view_buffer.inner.as_entire_binding(),
+                resource: view_buffer.binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: proj_buffer.inner.as_entire_binding(),
+                resource: proj_buffer.binding(),
             },
         ],
         label: Some("view_proj_bindgroup"),

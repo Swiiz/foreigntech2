@@ -2,14 +2,22 @@ use std::ops::RangeInclusive;
 
 use egui::{Color32, Slider};
 pub use egui_winit::State as EguiWinitState;
+use light::LightEditor;
 use nalgebra::{Point3, Vector3};
 use winit::window::Window;
 
-use crate::{game::GameState, graphics::camera::Projection};
+use crate::{
+    game::GameState,
+    graphics::{camera::Projection, GlobalRenderer},
+};
+
+pub mod light;
 
 pub struct Editor {
     pub gui_state: EguiWinitState,
     pub gui_ctx: egui::Context,
+
+    pub light_editor: LightEditor,
 }
 
 impl Editor {
@@ -23,12 +31,18 @@ impl Editor {
             None,
             None,
         );
+        let light_editor = LightEditor::default();
 
-        Self { gui_state, gui_ctx }
+        Self {
+            gui_state,
+            gui_ctx,
+            light_editor,
+        }
     }
 
     pub fn run(
         &mut self,
+        renderer: &mut GlobalRenderer,
         egui_input: egui::RawInput,
         game_state: &mut GameState,
         proj: &mut Projection,
@@ -39,7 +53,7 @@ impl Editor {
                     ui.label("Eye: ");
                     point_slider(ui, &mut game_state.view.eye, -10.0..=10.0);
                     ui.label("Up: ");
-                    vec_slider(ui, &mut game_state.view.up);
+                    vec3_slider(ui, &mut game_state.view.up);
                     ui.label("Angle: ");
                     angle_slider(
                         ui,
@@ -55,6 +69,8 @@ impl Editor {
                     ui.label("Fov Y: ");
                     ui.add(Slider::new(&mut proj.fov_deg, 0.0..=180.0));
                 });
+
+                ui.collapsing("Lights", |ui| self.light_editor.ui(ui, renderer))
             });
         });
 
@@ -80,7 +96,7 @@ fn point_slider(ui: &mut egui::Ui, value: &mut Point3<f32>, range: RangeInclusiv
     );
 }
 
-fn vec_slider(ui: &mut egui::Ui, value: &mut Vector3<f32>) {
+fn vec3_slider(ui: &mut egui::Ui, value: &mut Vector3<f32>) {
     ui.add(
         Slider::new(&mut value.data.0[0][0], -1.0..=1.0)
             .text("X")

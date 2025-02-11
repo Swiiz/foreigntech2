@@ -77,9 +77,12 @@ impl App {
         }
 
         let egui_input = self.editor.gui_state.take_egui_input(&self.window);
-        let (egui_output, egui_ctx) =
-            self.editor
-                .run(egui_input, &mut self.game_state, &mut self.proj);
+        let (egui_output, egui_ctx) = self.editor.run(
+            &mut self.renderer,
+            egui_input,
+            &mut self.game_state,
+            &mut self.proj,
+        );
 
         let render_data = RenderData {
             window_size,

@@ -71,7 +71,6 @@ fn vs_main(
     return out;
 }
 
-const SUN_DIR: vec3<f32> = vec3<f32>(0.0, 0.9, 0.3);
 
 //TODO: impl
 struct Light {
@@ -98,11 +97,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let light_dist = length(light.position.xyz - in.position.xyz);
         let attenuation = 1.0 / (1.0 + 0.09 * light_dist + 0.032 * light_dist * light_dist);
         
-        if light.light_type == 0 {
+        if light.light_type == 1 {
             ambient += diffuse(in.normal, light_dir) * attenuation * light.intensity * light.color;
-        }else if light.light_type == 1 { 
+        }else if light.light_type == 2 { 
             ambient += diffuse(in.normal, -light.direction) * light.intensity * light.color;
-        }else if light.light_type == 2 {
+        }else if light.light_type == 3 {
             let spot_effect = dot(light_dir, light.direction); // Cosine of angle
 
             if spot_effect > light.cutoff { 
