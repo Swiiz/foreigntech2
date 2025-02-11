@@ -13,6 +13,7 @@ use light::{Light, LightsBuffer, RawLight};
 use nalgebra::{Matrix4, Point3, Vector3};
 use utils::TextureWrapper;
 
+pub mod assets;
 pub mod atlas;
 pub mod buffer;
 pub mod camera;
@@ -82,7 +83,7 @@ impl GlobalRenderer {
             1,
             false,
         );
-        let models = EntitiesRenderer::new(ctx, &view_proj_bindgroup, &lights);
+        let models = EntitiesRenderer::new(ctx);
 
         Self {
             egui,
@@ -108,16 +109,19 @@ impl GlobalRenderer {
     }
 
     pub fn submit(&mut self, ctx: &GraphicsCtx, render_state: RenderData) {
-        if self.lights.apply_changes(ctx) || self.entities.apply_changes(ctx) {
-            self.entities
-                .recreate_render_bundle(ctx, &self.view_proj_bindgroup, &self.lights);
-        }
+        self.lights.apply_changes(ctx);
+        self.entities.apply_changes(ctx);
 
         if let Some(mut frame) = ctx.next_frame() {
             let mut render_pass =
                 clear_color_render_pass(&mut frame, Some(&self.depth_texture)).forget_lifetime();
 
-            render_pass.execute_bundles([&self.entities.render_bundle]);
+            self.entities.render(
+                ctx,
+                &mut render_pass,
+                &self.view_proj_bindgroup,
+                &self.lights,
+            );
 
             render_egui(
                 &mut self.egui,

@@ -3,23 +3,27 @@ use std::{
     io::{BufReader, Cursor},
 };
 
+use image::DynamicImage;
 use nalgebra::{Matrix4, Vector3};
 use nd_iter::iter_3d;
 use wgpu::{include_wgsl, DepthStencilState, RenderBundle, RenderBundleDepthStencil};
 
-use crate::graphics::{
-    atlas::{atlas_uniform_bind_group_layout, AtlasPacker, AtlasUniform},
-    buffer::CommonBuffer,
-    camera::view_proj_bind_group_layout,
-    color::Color3,
-    ctx::GraphicsCtx,
-    entities::model::{materials_buffer_bind_group_layout, Material},
-    light::{lights_buffer_bind_group_layout, LightsBuffer},
-    utils::TextureWrapper,
+use crate::{
+    graphics::{
+        atlas::{atlas_uniform_bind_group_layout, AtlasPacker, AtlasUniform},
+        buffer::CommonBuffer,
+        camera::view_proj_bind_group_layout,
+        color::Color3,
+        ctx::GraphicsCtx,
+        entities::model::{materials_buffer_bind_group_layout, Material},
+        light::{lights_buffer_bind_group_layout, LightsBuffer},
+        utils::TextureWrapper,
+    },
+    ASSETS,
 };
 
 use super::{
-    model::{MaterialsBuffer, ModelInstance, ModelVertex, ModelsBuffer},
+    model::{self, load_model, MaterialsBuffer, ModelInstance, ModelVertex, ModelsBuffer},
     EntityModel,
 };
 
@@ -29,15 +33,10 @@ pub struct EntitiesRenderer {
     pub atlas: AtlasUniform,
 
     pipeline: wgpu::RenderPipeline,
-    pub render_bundle: RenderBundle,
 }
 
 impl EntitiesRenderer {
-    pub fn new(
-        ctx: &GraphicsCtx,
-        view_proj_bindgroup: &wgpu::BindGroup,
-        lights: &LightsBuffer,
-    ) -> Self {
+    pub fn new(ctx: &GraphicsCtx) -> Self {
         let pipeline_layout = ctx
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -101,57 +100,53 @@ impl EntitiesRenderer {
                 cache: None,
             });
 
-        let models = ModelsBuffer::new(ctx, [(&load_test_model(), vec![SINGLE_INSTANCE.to_vec()])]);
+        let astronaut = load_model("Astronaut");
+        let earth = load_model("Earth");
 
-        println!(
-            "Models buffer configured to render {} triangles",
-            models.triangles_count()
-        );
+        let materials = [astronaut.materials, earth.materials].concat();
+        let textures = [astronaut.textures, earth.textures].concat();
+        let entities = [
+            (&astronaut.meshes, vec![single_instance(0)]),
+            (
+                &earth.meshes,
+                vec![stress_test_instances(1), stress_test_instances(2)],
+            ),
+        ];
 
-        let atlas = {
-            let mut packer = AtlasPacker::new();
-            let image =
-                image::load_from_memory(include_bytes!("../../../assets/Astronaut_BaseColor.png"))
-                    .expect("Failed to load image")
-                    .to_rgba8();
-            packer.add_image(image);
-            packer.build_atlas(ctx)
-        };
-        let materials = MaterialsBuffer::new(ctx, &[Material::new(Color3::WHITE)]);
-
-        let render_bundle = create_models_render_bundle(
-            &pipeline,
-            &models,
-            &materials,
-            &atlas,
-            ctx,
-            view_proj_bindgroup,
-            lights,
-        );
+        let models = ModelsBuffer::new(ctx, entities);
+        let materials = MaterialsBuffer::new(ctx, &materials);
+        let atlas = AtlasPacker::from_textures(textures).build_atlas(ctx);
 
         Self {
             models,
             materials,
             atlas,
             pipeline,
-            render_bundle,
         }
     }
 
-    pub fn recreate_render_bundle(
+    pub fn render(
         &mut self,
         ctx: &GraphicsCtx,
+        render_pass: &mut wgpu::RenderPass<'static>,
         view_proj_bindgroup: &wgpu::BindGroup,
         lights: &LightsBuffer,
     ) {
-        self.render_bundle = create_models_render_bundle(
-            &self.pipeline,
-            &self.models,
-            &self.materials,
-            &self.atlas,
-            ctx,
-            view_proj_bindgroup,
-            lights,
+        render_pass.set_pipeline(&self.pipeline);
+        render_pass.set_bind_group(0, view_proj_bindgroup, &[]);
+        render_pass.set_bind_group(1, &self.materials.bind_group, &[]);
+        render_pass.set_bind_group(2, &self.atlas.bind_group, &[]);
+        render_pass.set_bind_group(3, &lights.bind_group, &[]);
+        render_pass.set_vertex_buffer(0, self.models.vertex_buffer.as_slice());
+        render_pass.set_vertex_buffer(1, self.models.instance_buffer.as_slice());
+        render_pass.set_index_buffer(
+            self.models.index_buffer.as_slice(),
+            wgpu::IndexFormat::Uint16,
+        );
+        render_pass.multi_draw_indexed_indirect(
+            &self.models.indirect_buffer.inner(),
+            0,
+            self.models.ttl_mesh_count(),
         );
     }
 
@@ -160,56 +155,19 @@ impl EntitiesRenderer {
     }
 }
 
-fn create_models_render_bundle(
-    pipeline: &wgpu::RenderPipeline,
-    models: &ModelsBuffer,
-    materials: &MaterialsBuffer,
-    atlas: &AtlasUniform,
-
-    ctx: &GraphicsCtx,
-    view_proj_bindgroup: &wgpu::BindGroup,
-    lights: &LightsBuffer,
-) -> RenderBundle {
-    let mut encoder =
-        ctx.device
-            .create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
-                label: None,
-                color_formats: &[Some(ctx.surface_format)],
-                depth_stencil: Some(RenderBundleDepthStencil {
-                    format: TextureWrapper::DEPTH_FORMAT,
-                    depth_read_only: false,
-                    stencil_read_only: true,
-                }),
-                sample_count: 1,
-                multiview: None,
-            });
-
-    encoder.set_pipeline(&pipeline);
-    encoder.set_bind_group(0, view_proj_bindgroup, &[]);
-    encoder.set_bind_group(1, &materials.bind_group, &[]);
-    encoder.set_bind_group(2, &atlas.bind_group, &[]);
-    encoder.set_bind_group(3, &lights.bind_group, &[]);
-    encoder.set_vertex_buffer(0, models.vertex_buffer.as_slice());
-    encoder.set_vertex_buffer(1, models.instance_buffer.as_slice());
-    encoder.set_index_buffer(models.index_buffer.as_slice(), wgpu::IndexFormat::Uint16);
-    encoder.draw_indexed_indirect(&models.indirect_buffer.inner(), 0);
-
-    encoder.finish(&wgpu::RenderBundleDescriptor {
-        label: Some("model_render_bundle"),
-    })
+fn single_instance(material_id: u32) -> Vec<ModelInstance> {
+    vec![ModelInstance {
+        transform: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        material_id: material_id,
+    }]
 }
 
-const SINGLE_INSTANCE: &[ModelInstance] = &[ModelInstance {
-    transform: [
-        [1.0, 0.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0],
-    ],
-    material_id: 0,
-}];
-
-const STRESS_TEST_INSTANCES: LazyCell<Vec<ModelInstance>> = LazyCell::new(|| {
+fn stress_test_instances(material_id: u32) -> Vec<ModelInstance> {
     iter_3d(-25..25, -5..6, -50..0)
         .map(|(x, y, z)| {
             ModelInstance::new(
@@ -218,32 +176,8 @@ const STRESS_TEST_INSTANCES: LazyCell<Vec<ModelInstance>> = LazyCell::new(|| {
                     y as f32 * 5.,
                     z as f32 * 5.,
                 )),
-                0,
+                material_id,
             )
         })
         .collect::<Vec<_>>()
-});
-
-fn load_test_model() -> EntityModel {
-    let obj_text = include_str!("../../../assets/Astronaut.obj");
-    let obj_cursor = Cursor::new(obj_text);
-    let mut obj_reader = BufReader::new(obj_cursor);
-    let (models, mat_res) = tobj::load_obj_buf(
-        &mut obj_reader,
-        &tobj::LoadOptions {
-            triangulate: true,
-            single_index: true,
-            ..Default::default()
-        },
-        |p| {
-            println!("Want to load material: {p:?}");
-            Ok(Default::default())
-        },
-    )
-    .expect("Failed to load model");
-    //let materials = mat_res.expect("Failed to load materials");
-
-    EntityModel {
-        meshes: models.into_iter().map(|m| m.mesh).collect(),
-    }
 }

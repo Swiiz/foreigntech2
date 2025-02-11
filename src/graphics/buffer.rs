@@ -60,7 +60,7 @@ pub trait WriteBuffer: CommonBuffer {
             });
         let item_size = std::mem::size_of::<Self::Item>() as u64;
 
-        // Copy from A to Staging.A
+        // Copy from Self.A to Staging.A
         encoder.copy_buffer_to_buffer(
             self.inner(),
             item_size * a as u64,
@@ -78,7 +78,7 @@ pub trait WriteBuffer: CommonBuffer {
             item_size,
         );
 
-        // Copy from Staging.A to B
+        // Copy from Staging.A to Self.B
         encoder.copy_buffer_to_buffer(
             staging_buffer.inner(),
             0,
@@ -87,7 +87,7 @@ pub trait WriteBuffer: CommonBuffer {
             item_size,
         );
 
-        // Copy from Staging.B to A
+        // Copy from Staging.B to Self.A
         encoder.copy_buffer_to_buffer(
             staging_buffer.inner(),
             item_size,

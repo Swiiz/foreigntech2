@@ -1,4 +1,11 @@
+use std::{
+    io::{BufReader, Cursor},
+    sync::atomic::{AtomicU32, Ordering},
+    u16,
+};
+
 use nalgebra::Matrix4;
+use tobj::Mesh;
 use wgpu::util::DrawIndexedIndirectArgs;
 
 use crate::{
@@ -11,6 +18,7 @@ use crate::{
         ctx::GraphicsCtx,
     },
     utils::{DenseArrayOp, DenseId, DenseIdAllocator},
+    ASSETS,
 };
 
 use super::EntityModel;
@@ -69,11 +77,11 @@ impl ModelsBuffer {
 
     pub fn new<'a>(
         ctx: &GraphicsCtx,
-        iter: impl IntoIterator<Item = (&'a EntityModel, Vec<Vec<ModelInstance>>)>,
+        iter: impl IntoIterator<Item = (&'a Vec<Mesh>, Vec<Vec<ModelInstance>>)>,
     ) -> Self {
-        let mut idx_counter = 0;
-        let mut vtx_counter = 0;
-        let mut inst_counter = 0;
+        let idx_counter = AtomicU32::new(0);
+        let vtx_counter = AtomicU32::new(0);
+        let inst_counter = AtomicU32::new(0);
 
         struct PerModel<T> {
             meshes: T,
@@ -88,66 +96,70 @@ impl ModelsBuffer {
 
         let (vertices, indices, indirect, instances, instances_ids, meshes_count) = iter
             .into_iter()
-            .map(|(EntityModel { meshes }, instances)| {
-                let meshes = meshes
-                    .into_iter()
-                    .zip(instances)
-                    .map(move |(mesh, instances)| {
-                        let vertices = (0..mesh.positions.len() / 3).map(|i| {
-                            if mesh.normals.is_empty() {
-                                ModelVertex {
-                                    position: [
-                                        mesh.positions[i * 3],
-                                        mesh.positions[i * 3 + 1],
-                                        mesh.positions[i * 3 + 2],
-                                    ],
-                                    tex_coords: [
-                                        mesh.texcoords[i * 2],
-                                        1.0 - mesh.texcoords[i * 2 + 1],
-                                    ],
-                                    normal: [0.0, 0.0, 0.0],
-                                }
-                            } else {
-                                ModelVertex {
-                                    position: [
-                                        mesh.positions[i * 3],
-                                        mesh.positions[i * 3 + 1],
-                                        mesh.positions[i * 3 + 2],
-                                    ],
-                                    tex_coords: [
-                                        mesh.texcoords[i * 2],
-                                        1.0 - mesh.texcoords[i * 2 + 1],
-                                    ],
-                                    normal: [
-                                        mesh.normals[i * 3],
-                                        mesh.normals[i * 3 + 1],
-                                        mesh.normals[i * 3 + 2],
-                                    ],
-                                }
+            .map(|(meshes, instances)| {
+                let meshes = meshes.into_iter().zip(instances).map(|(mesh, instances)| {
+                    let vertices = (0..mesh.positions.len() / 3).map(|i| {
+                        if mesh.normals.is_empty() {
+                            ModelVertex {
+                                position: [
+                                    mesh.positions[i * 3],
+                                    mesh.positions[i * 3 + 1],
+                                    mesh.positions[i * 3 + 2],
+                                ],
+                                tex_coords: [
+                                    mesh.texcoords[i * 2],
+                                    1.0 - mesh.texcoords[i * 2 + 1],
+                                ],
+                                normal: [0.0, 0.0, 0.0],
                             }
-                        });
-
-                        let indices = mesh.indices.iter().map(|i| *i as u16);
-
-                        let indirect = wgpu::util::DrawIndexedIndirectArgs {
-                            index_count: mesh.indices.len() as u32,
-                            instance_count: instances.len() as u32,
-                            first_index: idx_counter as u32,
-                            base_vertex: vtx_counter as i32,
-                            first_instance: inst_counter,
-                        };
-
-                        vtx_counter += mesh.positions.len();
-                        idx_counter += mesh.indices.len() as u32;
-                        inst_counter += instances.len() as u32;
-
-                        PerMesh {
-                            geometry: (vertices, indices),
-                            indirect,
-                            instances_ids: DenseIdAllocator::new_packed(instances.len() as u32),
-                            instances,
+                        } else {
+                            ModelVertex {
+                                position: [
+                                    mesh.positions[i * 3],
+                                    mesh.positions[i * 3 + 1],
+                                    mesh.positions[i * 3 + 2],
+                                ],
+                                tex_coords: [
+                                    mesh.texcoords[i * 2],
+                                    1.0 - mesh.texcoords[i * 2 + 1],
+                                ],
+                                normal: [
+                                    mesh.normals[i * 3],
+                                    mesh.normals[i * 3 + 1],
+                                    mesh.normals[i * 3 + 2],
+                                ],
+                            }
                         }
                     });
+
+                    let indices = mesh.indices.iter().map(|i| *i as u16);
+
+                    let indirect = wgpu::util::DrawIndexedIndirectArgs {
+                        index_count: mesh.indices.len() as u32,
+                        instance_count: instances.len() as u32,
+                        first_index: idx_counter
+                            .fetch_add(mesh.indices.len() as u32, Ordering::SeqCst),
+                        base_vertex: vtx_counter
+                            .fetch_add(mesh.positions.len() as u32 / 3, Ordering::SeqCst)
+                            as i32,
+                        first_instance: inst_counter
+                            .fetch_add(instances.len() as u32, Ordering::SeqCst),
+                    };
+
+                    println!(
+                        "{} {} {}",
+                        inst_counter.load(Ordering::SeqCst),
+                        idx_counter.load(Ordering::SeqCst),
+                        vtx_counter.load(Ordering::SeqCst)
+                    );
+
+                    PerMesh {
+                        geometry: (vertices, indices),
+                        indirect,
+                        instances_ids: DenseIdAllocator::new_packed(instances.len() as u32),
+                        instances,
+                    }
+                });
 
                 PerModel { meshes }
             })
@@ -317,6 +329,10 @@ impl ModelsBuffer {
             .sum()
     }
 
+    pub fn ttl_mesh_count(&self) -> u32 {
+        self.meshes_count.iter().sum::<u16>() as u32
+    }
+
     pub fn apply_changes(&mut self, ctx: &GraphicsCtx) -> bool {
         self.changed
     }
@@ -436,7 +452,7 @@ pub fn materials_buffer_bind_group_layout(ctx: &GraphicsCtx) -> wgpu::BindGroupL
         .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
@@ -451,13 +467,64 @@ pub fn materials_buffer_bind_group_layout(ctx: &GraphicsCtx) -> wgpu::BindGroupL
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Material {
-    pub color: [f32; 4],
+    pub diffuse_color: [f32; 3],
+
+    pub diffuse_texture_id: u32,
 }
 
-impl Material {
-    pub fn new(color: Color3) -> Self {
-        Self {
-            color: color.into(),
-        }
+pub fn load_model(model_name: &str) -> EntityModel {
+    let model_file = ASSETS.models.get(model_name).unwrap();
+    let obj_cursor = Cursor::new(model_file.0.clone());
+    let mut obj_reader = BufReader::new(obj_cursor);
+    let (models, mat_res) = tobj::load_obj_buf(
+        &mut obj_reader,
+        &tobj::LoadOptions {
+            triangulate: true,
+            single_index: true,
+            ..Default::default()
+        },
+        |p| {
+            let material = p
+                .to_str()
+                .unwrap_or_else(|| panic!("Invalid material name {p:?} in model {model_name}"))
+                .strip_suffix(".mtl")
+                .expect("Invalid material file type {m:?} in model {model_name}. Expected .mtl");
+            let material_file = ASSETS
+                .materials
+                .get(&material)
+                .unwrap_or_else(|| panic!("Failed to load material {material}"));
+            let obj_cursor = Cursor::new(material_file.0.clone());
+            let mut obj_reader = BufReader::new(obj_cursor);
+            tobj::load_mtl_buf(&mut obj_reader)
+        },
+    )
+    .expect("Failed to load model");
+    let materials: Vec<_> = mat_res.expect("Failed to load materials");
+
+    EntityModel {
+        meshes: models.into_iter().map(|m| m.mesh).collect(),
+        textures: materials
+            .iter()
+            .filter_map(|m| {
+                let texture_file = m
+                    .diffuse_texture
+                    .as_ref()?;
+                let texture = texture_file
+                    .strip_suffix(".png")
+                    .or(texture_file.strip_prefix(".jpg"))
+                    .expect("Invalid texture file type {m:?} in model {model_name}. Expected .png or .jpg");
+                Some(ASSETS.textures.get(texture).unwrap().0.clone())
+            })
+            .collect(),
+        materials: materials
+            .into_iter()
+            .map(|m| Material {
+                diffuse_color: m.diffuse.unwrap_or(Color3::WHITE.into()),
+                diffuse_texture_id: match  m.diffuse_texture {
+                    None => u32::MAX,
+                    Some(_) => 0,
+                },
+            })
+            .collect(),
     }
 }

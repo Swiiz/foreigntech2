@@ -31,7 +31,13 @@ impl AtlasPacker {
         }
     }
 
-    pub fn add_image(&mut self, image: impl Into<RgbaImage>) -> () {
+    pub fn from_textures<T: Into<RgbaImage>>(images: impl IntoIterator<Item = T>) -> Self {
+        let mut packer = Self::new();
+        packer.add_images(images);
+        packer
+    }
+
+    pub fn add_image(&mut self, image: impl Into<RgbaImage>) {
         let image = image.into();
         let id = self
             .atlas
@@ -39,6 +45,12 @@ impl AtlasPacker {
             .unwrap_or_else(|| panic!("Failed to allocate texture to atlas"))
             .id;
         self.images.insert(id, image);
+    }
+
+    pub fn add_images<T: Into<RgbaImage>>(&mut self, images: impl IntoIterator<Item = T>) {
+        for image in images {
+            self.add_image(image);
+        }
     }
 
     pub fn build_atlas(&mut self, ctx: &GraphicsCtx) -> AtlasUniform {
