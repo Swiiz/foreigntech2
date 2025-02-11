@@ -14,7 +14,7 @@ use crate::{
     game::GameState,
     graphics::{
         camera::Projection,
-        ctx::{self, GraphicsCtx},
+        ctx::{GraphicsCtx},
         GlobalRenderer, RenderData,
     },
 };

@@ -1,9 +1,6 @@
-use egui::{ComboBox, Slider};
+use egui::Slider;
 
-use crate::{
-    app::inputs::current,
-    graphics::{light::Light, GlobalRenderer},
-};
+use crate::graphics::{light::Light, GlobalRenderer};
 
 use super::{point_slider, vec3_slider};
 

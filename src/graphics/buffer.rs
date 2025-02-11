@@ -1,6 +1,5 @@
 use std::{
     borrow::Borrow,
-    collections::VecDeque,
     ops::{Deref, DerefMut},
 };
 
@@ -38,9 +37,7 @@ pub trait CommonBuffer: Sized {
 }
 
 /// Equivalent to the wgpu::BufferUsages::COPY_DST flag
-pub trait WriteBuffer {
-    type Item;
-
+pub trait WriteBuffer: CommonBuffer {
     fn write_array_at_index(&self, ctx: &GraphicsCtx, data: &impl Borrow<[Self::Item]>, index: u32);
     fn write_at_index(&self, ctx: &GraphicsCtx, data: &Self::Item, index: u32);
 
@@ -50,10 +47,61 @@ pub trait WriteBuffer {
     fn write_array(&self, ctx: &GraphicsCtx, data: &impl Borrow<[Self::Item]>) {
         self.write_array_at_index(ctx, data, 0);
     }
+
+    fn swap_at_indices(&self, ctx: &GraphicsCtx, a: u32, b: u32)
+    where
+        Self::Item: bytemuck::NoUninit,
+    {
+        let staging_buffer = StagingBuffer::<Self::Item>::new_empty("Swap", ctx, 2);
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Swap at indices"),
+            });
+        let item_size = std::mem::size_of::<Self::Item>() as u64;
+
+        // Copy from A to Staging.A
+        encoder.copy_buffer_to_buffer(
+            self.inner(),
+            item_size * a as u64,
+            staging_buffer.inner(),
+            0,
+            item_size,
+        );
+
+        // Copy from Self.B to Staging.B
+        encoder.copy_buffer_to_buffer(
+            self.inner(),
+            item_size * b as u64,
+            staging_buffer.inner(),
+            item_size,
+            item_size,
+        );
+
+        // Copy from Staging.A to B
+        encoder.copy_buffer_to_buffer(
+            staging_buffer.inner(),
+            0,
+            self.inner(),
+            item_size * b as u64,
+            item_size,
+        );
+
+        // Copy from Staging.B to A
+        encoder.copy_buffer_to_buffer(
+            staging_buffer.inner(),
+            item_size,
+            self.inner(),
+            item_size * a as u64,
+            item_size,
+        );
+
+        ctx.queue.submit(Some(encoder.finish()));
+    }
 }
 
 macro_rules! impl_buffer_write {
-    ($($name:ident : $usage:ident),*) => {
+    ($($name:ident : $($usage:ident)?),*) => {
         $(
           pub struct $name<T> {
               inner: wgpu::Buffer,
@@ -81,7 +129,7 @@ macro_rules! impl_buffer_write {
                       &wgpu::util::BufferInitDescriptor {
                           label: Some(&format!("{} Buffer: {}", stringify!($name), label)),
                           contents: bytemuck::cast_slice(data.borrow()),
-                          usage: wgpu::BufferUsages::$usage | wgpu::BufferUsages::COPY_DST,
+                          usage: $(wgpu::BufferUsages::$usage |)? wgpu::BufferUsages::COPY_DST,
                       },
                   );
                   Self {
@@ -90,19 +138,24 @@ macro_rules! impl_buffer_write {
                   }
               }
 
+                #[allow(unreachable_code)]
                fn new_const_array(label: &str, ctx: &GraphicsCtx, data: impl Borrow<[Self::Item]>) -> Self {
-                  let buffer = wgpu::util::DeviceExt::create_buffer_init(
-                      &ctx.device,
-                      &wgpu::util::BufferInitDescriptor {
-                          label: Some(&format!("{} Buffer: {}", stringify!($name), label)),
-                          contents: bytemuck::cast_slice(data.borrow()),
-                          usage: wgpu::BufferUsages::$usage,
-                      },
-                  );
-                  Self {
-                      inner: buffer,
-                      _marker: std::marker::PhantomData,
-                  }
+                    $(
+                        let buffer = wgpu::util::DeviceExt::create_buffer_init(
+                            &ctx.device,
+                            &wgpu::util::BufferInitDescriptor {
+                                label: Some(&format!("{} Buffer: {}", stringify!($name), label)),
+                                contents: bytemuck::cast_slice(data.borrow()),
+                                usage: wgpu::BufferUsages::$usage,
+                            },
+                        );
+                        return Self {
+                            inner: buffer,
+                            _marker: std::marker::PhantomData,
+                        };
+                    )?
+
+                    unimplemented!("Staging buffer cannot be constant");
               }
 
                fn new_vec_with_capacity(label: &str, ctx: &GraphicsCtx, data: impl Borrow<[Self::Item]>, capacity: usize) -> Growable<Self>  {
@@ -116,7 +169,7 @@ macro_rules! impl_buffer_write {
                         &wgpu::util::BufferInitDescriptor {
                             label: Some(&label),
                             contents: bytemuck::cast_slice(slice),
-                            usage: wgpu::BufferUsages::$usage | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+                            usage: $(wgpu::BufferUsages::$usage |)? wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
                         },
                     );
                     Growable {
@@ -134,7 +187,7 @@ macro_rules! impl_buffer_write {
                     let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some(&format!("{} Buffer: {}", stringify!($name), label)),
                         size: capacity as u64 * std::mem::size_of::<T>() as u64,
-                        usage: wgpu::BufferUsages::$usage | wgpu::BufferUsages::COPY_DST,
+                        usage: $(wgpu::BufferUsages::$usage |)? wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: false,
                     });
                     Self {
@@ -147,7 +200,7 @@ macro_rules! impl_buffer_write {
                     let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some(&format!("{} Buffer: {}", stringify!($name), label)),
                         size: capacity as u64 * std::mem::size_of::<T>() as u64,
-                        usage: wgpu::BufferUsages::$usage | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+                        usage: $(wgpu::BufferUsages::$usage |)? wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
                         mapped_at_creation: false,
                     });
                     Growable {
@@ -163,8 +216,6 @@ macro_rules! impl_buffer_write {
           }
 
           impl<T: bytemuck::NoUninit> WriteBuffer for $name<T> {
-              type Item = T;
-
               fn write_at_index(&self, ctx: &GraphicsCtx, data: &T, offset: u32) {
                   ctx.queue
                       .write_buffer(&self.inner, offset as u64 * std::mem::size_of::<T>() as u64, bytemuck::cast_slice(&[*data]));
@@ -183,7 +234,8 @@ impl_buffer_write!(
     IndexBuffer: INDEX,
     InstanceBuffer: VERTEX,
     UniformBuffer: UNIFORM,
-    StorageBuffer: STORAGE
+    StorageBuffer: STORAGE,
+    StagingBuffer: COPY_SRC
 );
 
 pub struct IndirectBuffer {
@@ -324,8 +376,6 @@ impl CommonBuffer for IndirectBuffer {
 }
 
 impl WriteBuffer for IndirectBuffer {
-    type Item = wgpu::util::DrawIndexedIndirectArgs;
-
     fn write_array_at_index(
         &self,
         ctx: &GraphicsCtx,
@@ -369,42 +419,7 @@ impl<T: CommonBuffer> Growable<T> {
 
     /// Grows the inner buffer to the next power of two that is greater than or equal to `required_size` if needed.
     pub fn maybe_grow(&mut self, ctx: &GraphicsCtx, required_size: usize) -> bool {
-        let grow = required_size > self.capacity;
-        if grow {
-            // Compute new buffer size (double current size or required size)
-            let new_capacity = self.capacity.max(1) * 2;
-            let new_capacity = new_capacity.max(required_size);
-            let new_buffer = T::new_empty_vec(
-                {
-                    #[cfg(debug_assertions)]
-                    let l = self.label.as_str();
-                    #[cfg(not(debug_assertions))]
-                    let l = "";
-                    l
-                },
-                ctx,
-                new_capacity,
-            );
-
-            if self.capacity > 0 {
-                let mut encoder =
-                    ctx.device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("Growable Buffer Copy Encoder"),
-                        });
-                encoder.copy_buffer_to_buffer(
-                    &self.inner(),
-                    0,
-                    &new_buffer.inner(),
-                    0,
-                    self.capacity as u64 * std::mem::size_of::<T>() as u64,
-                );
-                ctx.queue.submit(Some(encoder.finish()));
-            }
-
-            *self = new_buffer;
-        }
-        return grow;
+        self.maybe_grow_around(ctx, required_size as u32, required_size)
     }
 
     pub fn maybe_grow_around(
@@ -445,20 +460,24 @@ impl<T: CommonBuffer> Growable<T> {
                     0,
                     index_offset,
                 );
-                encoder.copy_buffer_to_buffer(
-                    &self.inner(),
-                    index_offset,
-                    &new_buffer.inner(),
-                    (index as u64 + (required_size - self.capacity) as u64)
-                        * std::mem::size_of::<T::Item>() as u64,
-                    (self.capacity as u64 - index as u64) * std::mem::size_of::<T::Item>() as u64,
-                );
+                let tail_copy_size =
+                    (self.capacity as u64 - index as u64) * std::mem::size_of::<T::Item>() as u64;
+                if tail_copy_size > 0 {
+                    encoder.copy_buffer_to_buffer(
+                        &self.inner(),
+                        index_offset,
+                        &new_buffer.inner(),
+                        (index as u64 + (required_size - self.capacity) as u64)
+                            * std::mem::size_of::<T::Item>() as u64,
+                        tail_copy_size,
+                    );
+                }
                 ctx.queue.submit(Some(encoder.finish()));
             }
 
             *self = new_buffer;
         }
-        return grow;
+        grow
     }
 }
 

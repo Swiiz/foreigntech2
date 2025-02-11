@@ -1,7 +1,7 @@
 use tobj::Mesh;
 
+pub mod model;
 pub mod renderer;
-pub mod scene;
 
 pub struct EntityModel {
     pub meshes: Vec<Mesh>,

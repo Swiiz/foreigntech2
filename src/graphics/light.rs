@@ -1,5 +1,3 @@
-use std::ops::Deref;
-
 use nalgebra::{Point3, Vector3};
 
 use super::{
@@ -115,6 +113,7 @@ pub enum Light {
         intensity: f32,
         direction: Vector3<f32>,
     },
+    //Todo: fix spotlight in shader
     Spotlight {
         color: Color3,
         intensity: f32,

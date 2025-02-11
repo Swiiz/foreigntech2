@@ -8,8 +8,8 @@ use ctx::{Frame, GraphicsCtx};
 pub use egui::FullOutput as EguiOutput;
 pub use egui_wgpu::Renderer as EguiRenderer;
 use egui_wgpu::ScreenDescriptor;
+use entities::renderer::EntitiesRenderer;
 use light::{Light, LightsBuffer, RawLight};
-use model::renderer::ModelRenderer;
 use nalgebra::{Matrix4, Point3, Vector3};
 use utils::TextureWrapper;
 
@@ -18,13 +18,13 @@ pub mod buffer;
 pub mod camera;
 pub mod color;
 pub mod ctx;
+pub mod entities;
 pub mod light;
-pub mod model;
 pub mod utils;
 
 pub struct GlobalRenderer {
     egui: EguiRenderer,
-    pub models: ModelRenderer,
+    pub entities: EntitiesRenderer,
     pub lights: LightsBuffer,
 
     view: UniformBuffer<Matrix4<f32>>,
@@ -82,11 +82,11 @@ impl GlobalRenderer {
             1,
             false,
         );
-        let models = ModelRenderer::new(ctx, &view_proj_bindgroup, &lights);
+        let models = EntitiesRenderer::new(ctx, &view_proj_bindgroup, &lights);
 
         Self {
             egui,
-            models,
+            entities: models,
             view,
             proj,
             view_proj_bindgroup,
@@ -108,8 +108,8 @@ impl GlobalRenderer {
     }
 
     pub fn submit(&mut self, ctx: &GraphicsCtx, render_state: RenderData) {
-        if self.lights.apply_changes(ctx) || self.models.apply_changes(ctx) {
-            self.models
+        if self.lights.apply_changes(ctx) || self.entities.apply_changes(ctx) {
+            self.entities
                 .recreate_render_bundle(ctx, &self.view_proj_bindgroup, &self.lights);
         }
 
@@ -117,7 +117,7 @@ impl GlobalRenderer {
             let mut render_pass =
                 clear_color_render_pass(&mut frame, Some(&self.depth_texture)).forget_lifetime();
 
-            render_pass.execute_bundles([&self.models.render_bundle]);
+            render_pass.execute_bundles([&self.entities.render_bundle]);
 
             render_egui(
                 &mut self.egui,

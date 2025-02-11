@@ -1,6 +1,6 @@
 use std::ops::RangeInclusive;
 
-use egui::{Color32, Slider};
+use egui::{Color32, ComboBox, Slider};
 pub use egui_winit::State as EguiWinitState;
 use light::LightEditor;
 use nalgebra::{Matrix4, Point3, Vector3};
@@ -8,7 +8,14 @@ use winit::window::Window;
 
 use crate::{
     game::GameState,
-    graphics::{camera::Projection, ctx::GraphicsCtx, model::scene::ModelInstance, GlobalRenderer},
+    graphics::{
+        self,
+        camera::Projection,
+        ctx::GraphicsCtx,
+        entities::model::{ModelInstance, ModelInstanceId},
+        GlobalRenderer,
+    },
+    utils::DenseId,
 };
 
 pub mod light;
@@ -20,6 +27,7 @@ pub struct Editor {
     pub light_editor: LightEditor,
 
     pub new_inst_pos: Point3<f32>,
+    pub inst_id: u32,
 }
 
 impl Editor {
@@ -40,6 +48,7 @@ impl Editor {
             gui_ctx,
             light_editor,
             new_inst_pos: Default::default(),
+            inst_id: 0,
         }
     }
 
@@ -79,7 +88,7 @@ impl Editor {
                 ui.collapsing("Instances", |ui| {
                     point_slider(ui, &mut self.new_inst_pos, -10.0..=10.);
                     if ui.button("Push").clicked() {
-                        renderer.models.models.add_instance(
+                        renderer.entities.models.add_instance(
                             gctx,
                             0,
                             0,
@@ -89,6 +98,40 @@ impl Editor {
                                 material_id: 0,
                             },
                         );
+                    }
+
+                    ui.label(format!(
+                        "Instance count: {}",
+                        renderer.entities.models.instances_count(),
+                    ));
+
+                    let count = renderer.entities.models.instances_count();
+                    if count > 0 {
+                        ui.separator();
+                        ui.label("Instance id to modify: ");
+
+                        if count < 100 {
+                            ComboBox::from_label("DenseId").show_ui(ui, |ui| {
+                                for inst in renderer.entities.models.get_instance_alloc(0, 0).iter()
+                                {
+                                    ui.selectable_value(
+                                        &mut self.inst_id,
+                                        inst.raw(),
+                                        format!("{}", inst.raw()),
+                                    );
+                                }
+                            });
+                            if ui.button("Remove").clicked() {
+                                renderer.entities.models.remove_instance(
+                                    gctx,
+                                    ModelInstanceId {
+                                        model_id: 0,
+                                        mesh_id: 0,
+                                        instance_id: DenseId::from_raw(self.inst_id),
+                                    },
+                                );
+                            }
+                        }
                     }
                 })
             });

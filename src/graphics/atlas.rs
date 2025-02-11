@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
 use guillotiere::{size2, AllocId, AtlasAllocator};
-use image::{imageops::overlay, EncodableLayout, RgbImage, RgbaImage};
-use wgpu::util::DeviceExt;
+use image::{imageops::overlay, EncodableLayout, RgbaImage};
 
 use crate::graphics::{ctx::GraphicsCtx, utils::TextureWrapper};
 

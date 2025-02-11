@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, ops::Range};
+use std::collections::VecDeque;
 
 use egui::ahash::HashMap;
 
@@ -38,6 +38,16 @@ impl<T: Default + std::ops::AddAssign + From<u8> + Copy> IdAllocator<T> {
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub struct DenseId(u32);
 
+impl DenseId {
+    pub fn from_raw(v: u32) -> Self {
+        Self(v)
+    }
+
+    pub fn raw(&self) -> u32 {
+        self.0
+    }
+}
+
 #[derive(Default)]
 pub struct DenseIdAllocator {
     to_index: HashMap<DenseId, usize>,
@@ -45,7 +55,7 @@ pub struct DenseIdAllocator {
     next_dense: u32,
 }
 
-pub enum ArrayOp {
+pub enum DenseArrayOp {
     SwapRemove(u32),
     RemoveLast,
 }
@@ -73,7 +83,6 @@ impl DenseIdAllocator {
 
     /// This should be followed by a push into the dense array
     pub fn allocate(&mut self) -> DenseId {
-        let len = self.len();
         let handle = DenseId(self.next_dense);
         self.next_dense += 1;
 
@@ -83,20 +92,19 @@ impl DenseIdAllocator {
         handle
     }
 
-    pub fn free(&mut self, handle: DenseId) -> Option<ArrayOp> {
+    pub fn free(&mut self, handle: DenseId) -> Option<DenseArrayOp> {
         let index = *self.to_index.get(&handle)?;
 
         let last_index = self.len() - 1;
-        self.from_index.swap(index as usize, last_index as usize);
-
-        let removed_handle = self.from_index.pop().unwrap();
-        self.to_index.remove(&handle);
+        self.from_index.swap_remove(index as usize);
+        self.to_index.remove(&handle).unwrap();
 
         Some(if index != last_index {
-            self.to_index.insert(removed_handle, index);
-            ArrayOp::SwapRemove(index as u32)
+            self.to_index.insert(self.from_index[index as usize], index);
+
+            DenseArrayOp::SwapRemove(index as u32)
         } else {
-            ArrayOp::RemoveLast
+            DenseArrayOp::RemoveLast
         })
     }
 
@@ -107,5 +115,9 @@ impl DenseIdAllocator {
     pub fn len(&self) -> usize {
         assert!(self.to_index.len() == self.from_index.len());
         self.from_index.len()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &DenseId> {
+        self.from_index.iter()
     }
 }

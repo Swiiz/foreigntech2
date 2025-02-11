@@ -13,17 +13,17 @@ use crate::graphics::{
     camera::view_proj_bind_group_layout,
     color::Color3,
     ctx::GraphicsCtx,
+    entities::model::{materials_buffer_bind_group_layout, Material},
     light::{lights_buffer_bind_group_layout, LightsBuffer},
-    model::scene::{materials_buffer_bind_group_layout, Material},
     utils::TextureWrapper,
 };
 
 use super::{
-    scene::{MaterialsBuffer, ModelInstance, ModelVertex, ModelsBuffer},
+    model::{MaterialsBuffer, ModelInstance, ModelVertex, ModelsBuffer},
     EntityModel,
 };
 
-pub struct ModelRenderer {
+pub struct EntitiesRenderer {
     pub models: ModelsBuffer,
     pub materials: MaterialsBuffer,
     pub atlas: AtlasUniform,
@@ -32,7 +32,7 @@ pub struct ModelRenderer {
     pub render_bundle: RenderBundle,
 }
 
-impl ModelRenderer {
+impl EntitiesRenderer {
     pub fn new(
         ctx: &GraphicsCtx,
         view_proj_bindgroup: &wgpu::BindGroup,
@@ -101,10 +101,7 @@ impl ModelRenderer {
                 cache: None,
             });
 
-        let models = ModelsBuffer::new(
-            ctx,
-            [(&load_test_model(), vec![DEFAULT_SINGLE_INSTANCE.to_vec()])],
-        );
+        let models = ModelsBuffer::new(ctx, [(&load_test_model(), vec![SINGLE_INSTANCE.to_vec()])]);
 
         println!(
             "Models buffer configured to render {} triangles",
@@ -202,7 +199,7 @@ fn create_models_render_bundle(
     })
 }
 
-const DEFAULT_SINGLE_INSTANCE: &[ModelInstance] = &[ModelInstance {
+const SINGLE_INSTANCE: &[ModelInstance] = &[ModelInstance {
     transform: [
         [1.0, 0.0, 0.0, 0.0],
         [0.0, 1.0, 0.0, 0.0],
