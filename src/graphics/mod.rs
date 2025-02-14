@@ -116,12 +116,8 @@ impl GlobalRenderer {
             let mut render_pass =
                 clear_color_render_pass(&mut frame, Some(&self.depth_texture)).forget_lifetime();
 
-            self.entities.render(
-                ctx,
-                &mut render_pass,
-                &self.view_proj_bindgroup,
-                &self.lights,
-            );
+            self.entities
+                .render(&mut render_pass, &self.view_proj_bindgroup, &self.lights);
 
             render_egui(
                 &mut self.egui,

@@ -12,11 +12,7 @@ use winit::{
 use crate::{
     constants,
     game::GameState,
-    graphics::{
-        camera::Projection,
-        ctx::{GraphicsCtx},
-        GlobalRenderer, RenderData,
-    },
+    graphics::{camera::Projection, ctx::GraphicsCtx, GlobalRenderer, RenderData},
 };
 
 pub mod editor;
@@ -83,7 +79,6 @@ impl App {
         let egui_input = self.editor.gui_state.take_egui_input(&self.window);
         let (egui_output, egui_ctx) = self.editor.run(
             &mut self.renderer,
-            &self.graphics,
             egui_input,
             &mut self.game_state,
             &mut self.proj,

@@ -11,13 +11,13 @@ use wgpu::util::DrawIndexedIndirectArgs;
 use crate::{
     graphics::{
         buffer::{
-            CommonBuffer, Growable, IndexBuffer, IndirectBuffer, InstanceBuffer, StorageBuffer,
-            VertexBuffer, WriteBuffer,
+            ColumnChange, CommonBuffer, DenseMapped2d, IndexBuffer, IndirectBuffer, InstanceBuffer,
+            Slot2dId, StorageBuffer, VertexBuffer,
         },
         color::Color3,
         ctx::GraphicsCtx,
     },
-    utils::{DenseArrayOp, DenseId, DenseIdAllocator},
+    utils::DenseArrayOp,
     ASSETS,
 };
 
@@ -28,21 +28,30 @@ pub struct ModelsAllocator {}
 pub struct ModelsBuffer {
     pub(super) vertex_buffer: VertexBuffer<ModelVertex>,
     pub(super) index_buffer: IndexBuffer<u16>,
-    pub(super) instance_buffer: Growable<InstanceBuffer<ModelInstance>>,
+    pub(super) instance_buffer: DenseMapped2d<InstanceBuffer<ModelInstance>>,
     pub(super) indirect_buffer: IndirectBuffer,
 
-    instances_ids: Vec<Vec<DenseIdAllocator>>,
-    instances_capacity: Vec<Vec<u32>>,
-    meshes_count: Vec<u16>,
-    changed: bool,
-
+    instances_count: Vec<Vec<u16>>,
     triangles_count: u32,
+}
+
+enum InstancesChange {
+    Add {
+        model_id: u16,
+        mesh_id: u16,
+        instance: ModelInstance,
+        alloc_len: u32,
+    },
+    Remove {
+        id: ModelInstanceId,
+        array_op: DenseArrayOp,
+    },
 }
 
 pub struct ModelInstanceId {
     pub model_id: u16,
     pub mesh_id: u16,
-    pub instance_id: DenseId,
+    pub instance_id: Slot2dId,
 }
 
 impl ModelsBuffer {
@@ -51,14 +60,17 @@ impl ModelsBuffer {
         vertices: &[ModelVertex],
         indices: &[u16],
         instances: &[ModelInstance],
-        instances_ids: Vec<Vec<DenseIdAllocator>>,
-        instances_capacity: Vec<Vec<u32>>,
-        meshes_count: Vec<u16>,
         indirects: &[wgpu::util::DrawIndexedIndirectArgs],
+        instances_count: Vec<Vec<u16>>,
     ) -> Self {
         let vertex_buffer = VertexBuffer::new_const_array("Models vertices", ctx, vertices);
         let index_buffer = IndexBuffer::new_const_array("Models indices", ctx, indices);
-        let instance_buffer = InstanceBuffer::new_vec("Models instances", ctx, instances);
+        let instance_buffer = DenseMapped2d::new(
+            "Models instances",
+            ctx,
+            instances,
+            instances_count.iter().flatten().copied(),
+        );
         let indirect_buffer =
             IndirectBuffer::new_array("Models index indirect args", ctx, indirects);
 
@@ -67,10 +79,7 @@ impl ModelsBuffer {
             index_buffer,
             instance_buffer,
             indirect_buffer,
-            instances_ids,
-            instances_capacity,
-            meshes_count,
-            changed: false,
+            instances_count,
             triangles_count: indices.len() as u32 / 3 * instances.len() as u32,
         }
     }
@@ -91,128 +100,102 @@ impl ModelsBuffer {
             geometry: T,
             indirect: DrawIndexedIndirectArgs,
             instances: Vec<ModelInstance>,
-            instances_ids: DenseIdAllocator,
         }
 
-        let (vertices, indices, indirect, instances, instances_ids, meshes_count) = iter
-            .into_iter()
-            .map(|(meshes, instances)| {
-                let meshes = meshes.into_iter().zip(instances).map(|(mesh, instances)| {
-                    let vertices = (0..mesh.positions.len() / 3).map(|i| {
-                        if mesh.normals.is_empty() {
-                            ModelVertex {
-                                position: [
-                                    mesh.positions[i * 3],
-                                    mesh.positions[i * 3 + 1],
-                                    mesh.positions[i * 3 + 2],
-                                ],
-                                tex_coords: [
-                                    mesh.texcoords[i * 2],
-                                    1.0 - mesh.texcoords[i * 2 + 1],
-                                ],
-                                normal: [0.0, 0.0, 0.0],
+        let (vertices, indices, indirect, instances, instances_count) =
+            iter.into_iter()
+                .map(|(meshes, instances)| {
+                    let meshes = meshes.into_iter().zip(instances).map(|(mesh, instances)| {
+                        let vertices = (0..mesh.positions.len() / 3).map(|i| {
+                            if mesh.normals.is_empty() {
+                                ModelVertex {
+                                    position: [
+                                        mesh.positions[i * 3],
+                                        mesh.positions[i * 3 + 1],
+                                        mesh.positions[i * 3 + 2],
+                                    ],
+                                    tex_coords: [
+                                        mesh.texcoords[i * 2],
+                                        1.0 - mesh.texcoords[i * 2 + 1],
+                                    ],
+                                    normal: [0.0, 0.0, 0.0],
+                                }
+                            } else {
+                                ModelVertex {
+                                    position: [
+                                        mesh.positions[i * 3],
+                                        mesh.positions[i * 3 + 1],
+                                        mesh.positions[i * 3 + 2],
+                                    ],
+                                    tex_coords: [
+                                        mesh.texcoords[i * 2],
+                                        1.0 - mesh.texcoords[i * 2 + 1],
+                                    ],
+                                    normal: [
+                                        mesh.normals[i * 3],
+                                        mesh.normals[i * 3 + 1],
+                                        mesh.normals[i * 3 + 2],
+                                    ],
+                                }
                             }
-                        } else {
-                            ModelVertex {
-                                position: [
-                                    mesh.positions[i * 3],
-                                    mesh.positions[i * 3 + 1],
-                                    mesh.positions[i * 3 + 2],
-                                ],
-                                tex_coords: [
-                                    mesh.texcoords[i * 2],
-                                    1.0 - mesh.texcoords[i * 2 + 1],
-                                ],
-                                normal: [
-                                    mesh.normals[i * 3],
-                                    mesh.normals[i * 3 + 1],
-                                    mesh.normals[i * 3 + 2],
-                                ],
-                            }
+                        });
+
+                        let indices = mesh.indices.iter().map(|i| *i as u16);
+
+                        let indirect = wgpu::util::DrawIndexedIndirectArgs {
+                            index_count: mesh.indices.len() as u32,
+                            instance_count: instances.len() as u32,
+                            first_index: idx_counter
+                                .fetch_add(mesh.indices.len() as u32, Ordering::SeqCst),
+                            base_vertex: vtx_counter
+                                .fetch_add(mesh.positions.len() as u32 / 3, Ordering::SeqCst)
+                                as i32,
+                            first_instance: inst_counter
+                                .fetch_add(instances.len() as u32, Ordering::SeqCst),
+                        };
+
+                        PerMesh {
+                            geometry: (vertices, indices),
+                            indirect,
+                            instances,
                         }
                     });
 
-                    let indices = mesh.indices.iter().map(|i| *i as u16);
+                    PerModel { meshes }
+                })
+                .fold(
+                    Default::default(),
+                    |(
+                        mut vertices,
+                        mut indices,
+                        mut indirect,
+                        mut instances,
+                        mut instances_count,
+                    ): (Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>),
+                     model| {
+                        let mut instance_count = Vec::with_capacity(model.meshes.len());
+                        for mesh in model.meshes {
+                            let (local_vertices, local_indices) = mesh.geometry;
+                            vertices.extend(local_vertices);
+                            indices.extend(local_indices);
+                            instance_count.push(mesh.instances.len() as u16);
+                            instances.extend(mesh.instances);
+                            indirect.push(mesh.indirect);
+                        }
 
-                    let indirect = wgpu::util::DrawIndexedIndirectArgs {
-                        index_count: mesh.indices.len() as u32,
-                        instance_count: instances.len() as u32,
-                        first_index: idx_counter
-                            .fetch_add(mesh.indices.len() as u32, Ordering::SeqCst),
-                        base_vertex: vtx_counter
-                            .fetch_add(mesh.positions.len() as u32 / 3, Ordering::SeqCst)
-                            as i32,
-                        first_instance: inst_counter
-                            .fetch_add(instances.len() as u32, Ordering::SeqCst),
-                    };
+                        instances_count.push(instance_count);
 
-                    println!(
-                        "{} {} {}",
-                        inst_counter.load(Ordering::SeqCst),
-                        idx_counter.load(Ordering::SeqCst),
-                        vtx_counter.load(Ordering::SeqCst)
-                    );
-
-                    PerMesh {
-                        geometry: (vertices, indices),
-                        indirect,
-                        instances_ids: DenseIdAllocator::new_packed(instances.len() as u32),
-                        instances,
-                    }
-                });
-
-                PerModel { meshes }
-            })
-            .fold(
-                Default::default(),
-                |(
-                    mut vertices,
-                    mut indices,
-                    mut indirect,
-                    mut instances,
-                    mut instances_ids,
-                    mut meshes_count,
-                ): (Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>, Vec<_>),
-                 model| {
-                    let mesh_count = model.meshes.len() as u16;
-                    let mut meshes_instance_ids = Vec::with_capacity(model.meshes.len());
-                    for mesh in model.meshes {
-                        let (local_vertices, local_indices) = mesh.geometry;
-                        vertices.extend(local_vertices);
-                        indices.extend(local_indices);
-                        instances.extend(mesh.instances);
-                        indirect.push(mesh.indirect);
-                        meshes_instance_ids.push(mesh.instances_ids);
-                    }
-
-                    meshes_count.push(mesh_count);
-                    instances_ids.push(meshes_instance_ids);
-
-                    (
-                        vertices,
-                        indices,
-                        indirect,
-                        instances,
-                        instances_ids,
-                        meshes_count,
-                    )
-                },
-            );
-
-        let instances_capacity = instances_ids
-            .iter()
-            .map(|x| x.iter().map(|x| x.len() as u32).collect())
-            .collect();
+                        (vertices, indices, indirect, instances, instances_count)
+                    },
+                );
 
         Self::from_raw(
             ctx,
             &vertices,
             &indices,
             &instances,
-            instances_ids,
-            instances_capacity,
-            meshes_count,
             &indirect,
+            instances_count,
         )
     }
 
@@ -220,70 +203,19 @@ impl ModelsBuffer {
         self.triangles_count
     }
 
-    //todo: add changes buffer?
-    //TODO: Use staging belt please
     pub fn add_instance(
         &mut self,
-        ctx: &GraphicsCtx,
         model_id: u16,
         mesh_id: u16,
-        instance: &ModelInstance,
+        instance: ModelInstance,
     ) -> ModelInstanceId {
-        let ids = &mut self.instances_ids[model_id as usize][mesh_id as usize];
-        let next_id = ids.len() as u32;
-        let instance_id = ids.allocate();
-
-        //TODO: remove the unoptimized iterators
-
-        let meshes_index: u32 = self.meshes_count[0..model_id as usize]
+        let column_id = self.instances_count[..model_id as usize]
             .iter()
-            .map(|i| *i as u32)
-            .sum();
-
-        let instances_index: u32 = (0..model_id as usize)
-            .map(|i| self.instances_capacity[i][..].into_iter())
             .flatten()
-            .sum();
-
-        let instance_capacity = self.instances_capacity[model_id as usize][mesh_id as usize];
-
-        let mut grow_amount = 0;
-        if next_id >= instance_capacity {
-            let new_capacity = (instance_capacity.max(1) * 2).max(next_id);
-            let local_instances_index: u32 = (0..mesh_id as u32 + 1)
-                .map(|m| self.instances_ids[model_id as usize][m as usize].len() as u32)
-                .sum::<u32>()
-                - 1;
-            grow_amount = new_capacity - instance_capacity;
-            let cut_index = instances_index + local_instances_index;
-            self.changed |= self.instance_buffer.maybe_grow_around(
-                ctx,
-                cut_index,
-                next_id as usize + grow_amount as usize,
-            );
-            self.instance_buffer
-                .write_at_index(ctx, &instance, cut_index);
-        }
-
-        self.indirect_buffer.write_instance_count_at_index(
-            ctx,
-            meshes_index + mesh_id as u32,
-            next_id + 1,
-        );
-
-        if grow_amount > 0 {
-            let meshes_succeeding_index =
-                meshes_index + self.meshes_count[model_id as usize] as u32;
-            for i in &self.meshes_count[model_id as usize + 1..] {
-                for j in 0..*i as u32 {
-                    self.indirect_buffer.write_first_instance_at_index(
-                        ctx,
-                        meshes_succeeding_index + j,
-                        instances_index + grow_amount,
-                    );
-                }
-            }
-        }
+            .sum::<u16>()
+            + mesh_id as u16;
+        let instance_id = self.instance_buffer.push(column_id, instance);
+        self.instances_count[model_id as usize][mesh_id as usize] += 1;
 
         ModelInstanceId {
             model_id,
@@ -292,49 +224,40 @@ impl ModelsBuffer {
         }
     }
 
-    //todo: maybe add capacity shrinking?
-    pub fn remove_instance(&mut self, ctx: &GraphicsCtx, handle: ModelInstanceId) {
-        let ids = &mut self.instances_ids[handle.model_id as usize][handle.mesh_id as usize];
-        if let Some(op) = ids.free(handle.instance_id) {
-            match op {
-                DenseArrayOp::SwapRemove(idx) => {
-                    self.instance_buffer
-                        .swap_at_indices(ctx, idx, ids.len() as u32);
+    pub fn remove_instance(&mut self, id: ModelInstanceId) {
+        self.instance_buffer.remove(id.instance_id);
+        self.instances_count[id.model_id as usize][id.mesh_id as usize] -= 1;
+    }
+
+    pub fn model_count(&self) -> u32 {
+        self.instances_count[..]
+            .iter()
+            .map(|m| m.len())
+            .sum::<usize>() as u32
+    }
+
+    //TODO: Use staging belt please
+    pub fn apply_changes(&mut self, ctx: &GraphicsCtx) {
+        let (_grown, changes) = self.instance_buffer.apply_changes(ctx);
+
+        for (column_id, change) in changes {
+            match change {
+                ColumnChange::Moved { new_offset } => {
+                    self.indirect_buffer.write_first_instance_at_index(
+                        ctx,
+                        column_id as u32,
+                        new_offset as u32,
+                    );
                 }
-                DenseArrayOp::RemoveLast => (),
+                ColumnChange::Resized { new_size } => {
+                    self.indirect_buffer.write_instance_count_at_index(
+                        ctx,
+                        column_id as u32,
+                        new_size as u32,
+                    );
+                }
             }
         }
-
-        let meshes_index: u32 = self.meshes_count[0..handle.model_id as usize]
-            .iter()
-            .map(|i| *i as u32)
-            .sum();
-
-        self.indirect_buffer.write_instance_count_at_index(
-            ctx,
-            meshes_index + handle.mesh_id as u32,
-            ids.len() as u32,
-        );
-    }
-
-    pub fn get_instance_alloc(&self, model_id: u16, mesh_id: u16) -> &DenseIdAllocator {
-        &self.instances_ids[model_id as usize][mesh_id as usize]
-    }
-
-    pub fn instances_count(&self) -> usize {
-        self.instances_ids
-            .iter()
-            .flatten()
-            .map(|ids| ids.len())
-            .sum()
-    }
-
-    pub fn ttl_mesh_count(&self) -> u32 {
-        self.meshes_count.iter().sum::<u16>() as u32
-    }
-
-    pub fn apply_changes(&mut self, ctx: &GraphicsCtx) -> bool {
-        self.changed
     }
 }
 

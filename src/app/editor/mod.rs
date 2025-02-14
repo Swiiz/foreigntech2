@@ -1,6 +1,6 @@
 use std::ops::RangeInclusive;
 
-use egui::{Color32, ComboBox, Slider};
+use egui::{Color32, Slider};
 pub use egui_winit::State as EguiWinitState;
 use light::LightEditor;
 use nalgebra::{Matrix4, Point3, Vector3};
@@ -8,14 +8,7 @@ use winit::window::Window;
 
 use crate::{
     game::GameState,
-    graphics::{
-        self,
-        camera::Projection,
-        ctx::GraphicsCtx,
-        entities::model::{ModelInstance, ModelInstanceId},
-        GlobalRenderer,
-    },
-    utils::DenseId,
+    graphics::{camera::Projection, entities::model::ModelInstance, GlobalRenderer},
 };
 
 pub mod light;
@@ -55,7 +48,6 @@ impl Editor {
     pub fn run(
         &mut self,
         renderer: &mut GlobalRenderer,
-        gctx: &GraphicsCtx,
         egui_input: egui::RawInput,
         game_state: &mut GameState,
         proj: &mut Projection,
@@ -89,10 +81,9 @@ impl Editor {
                     point_slider(ui, &mut self.new_inst_pos, -10.0..=10.);
                     if ui.button("Push").clicked() {
                         renderer.entities.models.add_instance(
-                            gctx,
                             0,
                             0,
-                            &ModelInstance {
+                            ModelInstance {
                                 transform: Matrix4::new_translation(&self.new_inst_pos.coords)
                                     .into(),
                                 material_id: 0,
@@ -100,6 +91,7 @@ impl Editor {
                         );
                     }
 
+                    /*
                     ui.label(format!(
                         "Instance count: {}",
                         renderer.entities.models.instances_count(),
@@ -122,17 +114,14 @@ impl Editor {
                                 }
                             });
                             if ui.button("Remove").clicked() {
-                                renderer.entities.models.remove_instance(
-                                    gctx,
-                                    ModelInstanceId {
-                                        model_id: 0,
-                                        mesh_id: 0,
-                                        instance_id: DenseId::from_raw(self.inst_id),
-                                    },
-                                );
+                                renderer.entities.models.remove_instance(ModelInstanceId {
+                                    model_id: 0,
+                                    mesh_id: 0,
+                                    instance_id: DenseId::from_raw(self.inst_id),
+                                });
                             }
                         }
-                    }
+                    } */
                 })
             });
         });

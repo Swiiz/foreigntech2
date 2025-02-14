@@ -3,12 +3,12 @@ use std::collections::VecDeque;
 use egui::ahash::HashMap;
 
 #[derive(Default)]
-pub struct IdAllocator<T = u32> {
+pub struct SparseIdAllocator<T = u32> {
     free_ids: VecDeque<T>,
     len: T,
 }
 
-impl<T: Default + std::ops::AddAssign + From<u8> + Copy> IdAllocator<T> {
+impl<T: Default + std::ops::AddAssign + From<u8> + Copy> SparseIdAllocator<T> {
     pub fn new_packed(len: T) -> Self {
         Self {
             len,
@@ -56,7 +56,7 @@ pub struct DenseIdAllocator {
 }
 
 pub enum DenseArrayOp {
-    SwapRemove(u32),
+    SwapRemove { index: u32, last: u32 },
     RemoveLast,
 }
 
@@ -86,7 +86,7 @@ impl DenseIdAllocator {
         let handle = DenseId(self.next_dense);
         self.next_dense += 1;
 
-        self.to_index.insert(handle, self.len());
+        self.to_index.insert(handle, self.from_index.len());
         self.from_index.push(handle);
 
         handle
@@ -95,26 +95,27 @@ impl DenseIdAllocator {
     pub fn free(&mut self, handle: DenseId) -> Option<DenseArrayOp> {
         let index = *self.to_index.get(&handle)?;
 
-        let last_index = self.len() - 1;
         self.from_index.swap_remove(index as usize);
         self.to_index.remove(&handle).unwrap();
 
-        Some(if index != last_index {
+        Some(if index != self.from_index.len() {
             self.to_index.insert(self.from_index[index as usize], index);
 
-            DenseArrayOp::SwapRemove(index as u32)
+            DenseArrayOp::SwapRemove {
+                index: index as u32,
+                last: self.len() as u32,
+            }
         } else {
             DenseArrayOp::RemoveLast
         })
     }
 
-    pub fn get_index(&self, id: DenseId) -> Option<u32> {
-        self.to_index.get(&id).map(|i| *i as u32)
+    pub fn len(&self) -> usize {
+        self.from_index.len()
     }
 
-    pub fn len(&self) -> usize {
-        assert!(self.to_index.len() == self.from_index.len());
-        self.from_index.len()
+    pub fn get_index(&self, id: DenseId) -> Option<u32> {
+        self.to_index.get(&id).map(|i| *i as u32)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &DenseId> {

@@ -1,19 +1,19 @@
 use nalgebra::{Point3, Vector3};
 
 use super::{
-    buffer::{CommonBuffer, Mapped, StorageBuffer, WriteBuffer},
+    buffer::{CommonBuffer, MappedSparse, StorageBuffer, WriteBuffer},
     color::Color3,
 };
 
 pub struct LightsBuffer {
-    pub storage_buffer: Mapped<StorageBuffer<RawLight>>,
+    pub storage_buffer: MappedSparse<StorageBuffer<RawLight>>,
     count_uniform: super::UniformBuffer<u32>,
     pub bind_group: wgpu::BindGroup,
 }
 
 impl LightsBuffer {
     pub fn new(ctx: &super::GraphicsCtx, lights: &[RawLight]) -> Self {
-        let storage_buffer = Mapped::<StorageBuffer<_>>::new("Lights", ctx, lights);
+        let storage_buffer = MappedSparse::<StorageBuffer<_>>::new("Lights", ctx, lights);
         let count_uniform = super::UniformBuffer::new("lights_count", ctx, &(lights.len() as u32));
 
         let bind_group = lights_buffer_bindgroup(ctx, &(**storage_buffer), &count_uniform);
@@ -26,15 +26,13 @@ impl LightsBuffer {
     }
 
     /// Returns true if the bindgroup was recreated, thus requiring the renderbundle to be recreated
-    pub fn apply_changes(&mut self, ctx: &super::GraphicsCtx) -> bool {
-        let grown = self.storage_buffer.apply_changes(ctx);
-        if grown {
+    pub fn apply_changes(&mut self, ctx: &super::GraphicsCtx) {
+        if self.storage_buffer.apply_changes(ctx) {
             self.bind_group =
                 lights_buffer_bindgroup(ctx, &(**self.storage_buffer), &self.count_uniform)
         }
         self.count_uniform
             .write(ctx, &(self.storage_buffer.len() as u32));
-        return grown;
     }
 }
 

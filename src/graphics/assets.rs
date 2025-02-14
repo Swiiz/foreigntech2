@@ -1,6 +1,6 @@
 use std::string::FromUtf8Error;
 
-use asset_tree::{asset_files, loader::AssetLoader, Asset, AssetBound, AssetFileType};
+use asset_tree::{asset_files, loader::AssetLoader};
 use image::ImageError;
 
 pub struct ModelFile(pub String);

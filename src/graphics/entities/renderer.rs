@@ -1,31 +1,19 @@
-use std::{
-    cell::LazyCell,
-    io::{BufReader, Cursor},
-};
 
-use image::DynamicImage;
 use nalgebra::{Matrix4, Vector3};
 use nd_iter::iter_3d;
-use wgpu::{include_wgsl, DepthStencilState, RenderBundle, RenderBundleDepthStencil};
+use wgpu::{include_wgsl, DepthStencilState};
 
-use crate::{
-    graphics::{
+use crate::graphics::{
         atlas::{atlas_uniform_bind_group_layout, AtlasPacker, AtlasUniform},
         buffer::CommonBuffer,
         camera::view_proj_bind_group_layout,
-        color::Color3,
         ctx::GraphicsCtx,
-        entities::model::{materials_buffer_bind_group_layout, Material},
+        entities::model::materials_buffer_bind_group_layout,
         light::{lights_buffer_bind_group_layout, LightsBuffer},
         utils::TextureWrapper,
-    },
-    ASSETS,
-};
+    };
 
-use super::{
-    model::{self, load_model, MaterialsBuffer, ModelInstance, ModelVertex, ModelsBuffer},
-    EntityModel,
-};
+use super::model::{load_model, MaterialsBuffer, ModelInstance, ModelVertex, ModelsBuffer};
 
 pub struct EntitiesRenderer {
     pub models: ModelsBuffer,
@@ -107,10 +95,7 @@ impl EntitiesRenderer {
         let textures = [astronaut.textures, earth.textures].concat();
         let entities = [
             (&astronaut.meshes, vec![single_instance(0)]),
-            (
-                &earth.meshes,
-                vec![stress_test_instances(1), stress_test_instances(2)],
-            ),
+            (&earth.meshes, vec![single_instance(1), single_instance(2)]),
         ];
 
         let models = ModelsBuffer::new(ctx, entities);
@@ -127,7 +112,6 @@ impl EntitiesRenderer {
 
     pub fn render(
         &mut self,
-        ctx: &GraphicsCtx,
         render_pass: &mut wgpu::RenderPass<'static>,
         view_proj_bindgroup: &wgpu::BindGroup,
         lights: &LightsBuffer,
@@ -146,12 +130,12 @@ impl EntitiesRenderer {
         render_pass.multi_draw_indexed_indirect(
             &self.models.indirect_buffer.inner(),
             0,
-            self.models.ttl_mesh_count(),
+            self.models.model_count(),
         );
     }
 
-    pub fn apply_changes(&mut self, ctx: &GraphicsCtx) -> bool {
-        self.models.apply_changes(ctx)
+    pub fn apply_changes(&mut self, ctx: &GraphicsCtx) {
+        self.models.apply_changes(ctx);
     }
 }
 

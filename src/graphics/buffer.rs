@@ -3,12 +3,16 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::utils::IdAllocator;
+use bytemuck::NoUninit;
+
+use crate::utils::{DenseArrayOp, DenseId, DenseIdAllocator, SparseIdAllocator};
 
 use super::ctx::GraphicsCtx;
 
 pub trait CommonBuffer: Sized {
     type Item;
+    const ITEM_BYTE_SIZE: u64 = std::mem::size_of::<Self::Item>() as u64;
+
     fn inner(&self) -> &wgpu::Buffer;
 
     fn new(label: &str, ctx: &GraphicsCtx, data: &Self::Item) -> Self;
@@ -58,7 +62,7 @@ pub trait WriteBuffer: CommonBuffer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Swap at indices"),
             });
-        let item_size = std::mem::size_of::<Self::Item>() as u64;
+        let item_size = Self::ITEM_BYTE_SIZE;
 
         // Copy from Self.A to Staging.A
         encoder.copy_buffer_to_buffer(
@@ -160,14 +164,13 @@ macro_rules! impl_buffer_write {
 
                fn new_vec_with_capacity(label: &str, ctx: &GraphicsCtx, data: impl Borrow<[Self::Item]>, capacity: usize) -> Growable<Self>  {
                     let slice = data.borrow();
-                    let label = format!("{} Buffer: {}", stringify!($name), label);
                     if capacity < slice.len() {
                         panic!("Growable (vec) buffer capacity must be greater than or equal to the length of the provided data slice")
                     }
                     let buffer = wgpu::util::DeviceExt::create_buffer_init(
                         &ctx.device,
                         &wgpu::util::BufferInitDescriptor {
-                            label: Some(&label),
+                            label: Some(&format!("{} Buffer: {}", stringify!($name), label)),
                             contents: bytemuck::cast_slice(slice),
                             usage: $(wgpu::BufferUsages::$usage |)? wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
                         },
@@ -179,14 +182,14 @@ macro_rules! impl_buffer_write {
                         },
                         capacity,
                         #[cfg(debug_assertions)]
-                        label,
+                        label: label.to_string(),
                     }
                 }
 
                  fn new_empty(label: &str, ctx: &GraphicsCtx, capacity: usize) -> Self {
                     let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some(&format!("{} Buffer: {}", stringify!($name), label)),
-                        size: capacity as u64 * std::mem::size_of::<T>() as u64,
+                        size: capacity as u64 * Self::ITEM_BYTE_SIZE,
                         usage: $(wgpu::BufferUsages::$usage |)? wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: false,
                     });
@@ -199,7 +202,7 @@ macro_rules! impl_buffer_write {
                  fn new_empty_vec(label: &str, ctx: &GraphicsCtx, capacity: usize) -> Growable<Self> {
                     let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some(&format!("{} Buffer: {}", stringify!($name), label)),
-                        size: capacity as u64 * std::mem::size_of::<T>() as u64,
+                        size: capacity as u64 * Self::ITEM_BYTE_SIZE,
                         usage: $(wgpu::BufferUsages::$usage |)? wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
                         mapped_at_creation: false,
                     });
@@ -218,10 +221,10 @@ macro_rules! impl_buffer_write {
           impl<T: bytemuck::NoUninit> WriteBuffer for $name<T> {
               fn write_at_index(&self, ctx: &GraphicsCtx, data: &T, offset: u32) {
                   ctx.queue
-                      .write_buffer(&self.inner, offset as u64 * std::mem::size_of::<T>() as u64, bytemuck::cast_slice(&[*data]));
+                      .write_buffer(&self.inner, offset as u64 * Self::ITEM_BYTE_SIZE, bytemuck::cast_slice(&[*data]));
               }
               fn write_array_at_index(&self, ctx: &GraphicsCtx, data: &impl Borrow<[T]>, offset: u32) {
-                  ctx.queue.write_buffer(&self.inner, offset as u64 * std::mem::size_of::<T>() as u64, bytemuck::cast_slice(data.borrow()));
+                  ctx.queue.write_buffer(&self.inner, offset as u64 * Self::ITEM_BYTE_SIZE, bytemuck::cast_slice(data.borrow()));
               }
           }
 
@@ -254,8 +257,7 @@ impl IndirectBuffer {
     ) {
         ctx.queue.write_buffer(
             &self.inner,
-            Self::ARG_INSTANCE_COUNT_BYTE_OFFSET
-                + index as u64 * Self::ARG_FIRST_INSTANCE_BYTE_OFFSET,
+            Self::ARG_INSTANCE_COUNT_BYTE_OFFSET + index as u64 * Self::ITEM_BYTE_SIZE,
             bytemuck::bytes_of(&instance_count),
         );
     }
@@ -268,8 +270,7 @@ impl IndirectBuffer {
     ) {
         ctx.queue.write_buffer(
             &self.inner,
-            Self::ARG_FIRST_INSTANCE_BYTE_OFFSET
-                + index as u64 * Self::ARG_FIRST_INSTANCE_BYTE_OFFSET,
+            Self::ARG_FIRST_INSTANCE_BYTE_OFFSET + index as u64 * Self::ITEM_BYTE_SIZE,
             bytemuck::bytes_of(&first_instance),
         );
     }
@@ -320,7 +321,7 @@ impl CommonBuffer for IndirectBuffer {
     fn new_empty(label: &str, ctx: &GraphicsCtx, capacity: usize) -> Self {
         let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(&format!("{} Buffer: {}", stringify!($name), label)),
-            size: capacity as u64 * std::mem::size_of::<Self::Item>() as u64,
+            size: capacity as u64 * Self::ITEM_BYTE_SIZE,
             usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -335,14 +336,13 @@ impl CommonBuffer for IndirectBuffer {
         capacity: usize,
     ) -> Growable<Self> {
         let slice = data.borrow();
-        let label = format!("{} Buffer: {}", stringify!($name), label);
         if capacity < slice.len() {
             panic!("Growable (vec) buffer capacity must be greater than or equal to the length of the provided data slice")
         }
         let buffer = wgpu::util::DeviceExt::create_buffer_init(
             &ctx.device,
             &wgpu::util::BufferInitDescriptor {
-                label: Some(&label),
+                label: Some(&format!("{} Buffer: {}", stringify!($name), label)),
                 contents: cast_iia(slice),
                 usage: wgpu::BufferUsages::INDIRECT
                     | wgpu::BufferUsages::COPY_DST
@@ -353,14 +353,14 @@ impl CommonBuffer for IndirectBuffer {
             inner: Self { inner: buffer },
             capacity,
             #[cfg(debug_assertions)]
-            label,
+            label: label.to_string(),
         }
     }
 
     fn new_empty_vec(label: &str, ctx: &GraphicsCtx, capacity: usize) -> Growable<Self> {
         let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(&format!("{} Buffer: {}", stringify!($name), label)),
-            size: capacity as u64 * std::mem::size_of::<Self::Item>() as u64,
+            size: capacity as u64 * Self::ITEM_BYTE_SIZE,
             usage: wgpu::BufferUsages::INDIRECT
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
@@ -384,7 +384,7 @@ impl WriteBuffer for IndirectBuffer {
     ) {
         ctx.queue.write_buffer(
             &self.inner,
-            offset as u64 * std::mem::size_of::<Self::Item>() as u64,
+            offset as u64 * Self::ITEM_BYTE_SIZE,
             cast_iia(data.borrow()),
         );
     }
@@ -399,7 +399,7 @@ fn cast_iia(args: &[wgpu::util::DrawIndexedIndirectArgs]) -> &[u8] {
     unsafe {
         std::slice::from_raw_parts(
             args.as_ptr().cast(),
-            args.len() * std::mem::size_of::<wgpu::util::DrawIndexedIndirectArgs>(),
+            args.len() * IndirectBuffer::ITEM_BYTE_SIZE as usize,
         )
     }
 }
@@ -419,15 +419,6 @@ impl<T: CommonBuffer> Growable<T> {
 
     /// Grows the inner buffer to the next power of two that is greater than or equal to `required_size` if needed.
     pub fn maybe_grow(&mut self, ctx: &GraphicsCtx, required_size: usize) -> bool {
-        self.maybe_grow_around(ctx, required_size as u32, required_size)
-    }
-
-    pub fn maybe_grow_around(
-        &mut self,
-        ctx: &GraphicsCtx,
-        index: u32,
-        required_size: usize,
-    ) -> bool {
         let grow = required_size > self.capacity;
         if grow {
             // Compute new buffer size (double current size or required size)
@@ -446,8 +437,6 @@ impl<T: CommonBuffer> Growable<T> {
             );
 
             if self.capacity > 0 {
-                let index_offset = index as u64 * std::mem::size_of::<T::Item>() as u64;
-
                 let mut encoder =
                     ctx.device
                         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -458,20 +447,8 @@ impl<T: CommonBuffer> Growable<T> {
                     0,
                     &new_buffer.inner(),
                     0,
-                    index_offset,
+                    self.capacity as u64 * T::ITEM_BYTE_SIZE,
                 );
-                let tail_copy_size =
-                    (self.capacity as u64 - index as u64) * std::mem::size_of::<T::Item>() as u64;
-                if tail_copy_size > 0 {
-                    encoder.copy_buffer_to_buffer(
-                        &self.inner(),
-                        index_offset,
-                        &new_buffer.inner(),
-                        (index as u64 + (required_size - self.capacity) as u64)
-                            * std::mem::size_of::<T::Item>() as u64,
-                        tail_copy_size,
-                    );
-                }
                 ctx.queue.submit(Some(encoder.finish()));
             }
 
@@ -494,21 +471,22 @@ impl<T> DerefMut for Growable<T> {
     }
 }
 
-pub struct Mapped<T: CommonBuffer> {
+/// Mapped sparse buffer with T::default() in the free slots
+pub struct MappedSparse<T: CommonBuffer> {
     pub inner: Growable<T>,
     pub changes: Vec<(u32, T::Item)>,
 
-    ids: IdAllocator,
+    ids: SparseIdAllocator,
 }
 
-impl<I: Default, T: CommonBuffer<Item = I> + WriteBuffer<Item = I>> Mapped<T> {
+impl<I: Default, T: CommonBuffer<Item = I> + WriteBuffer<Item = I>> MappedSparse<T> {
     pub fn new(label: &str, ctx: &GraphicsCtx, data: impl Borrow<[I]>) -> Self {
         let data = data.borrow();
         let inner = T::new_vec(label, ctx, data);
         Self {
             inner,
             changes: vec![],
-            ids: IdAllocator::new_packed(data.len() as u32),
+            ids: SparseIdAllocator::new_packed(data.len() as u32),
         }
     }
 
@@ -545,14 +523,240 @@ impl<I: Default, T: CommonBuffer<Item = I> + WriteBuffer<Item = I>> Mapped<T> {
     }
 }
 
-impl<T: CommonBuffer> Deref for Mapped<T> {
+impl<T: CommonBuffer> Deref for MappedSparse<T> {
     type Target = Growable<T>;
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<T: CommonBuffer> DerefMut for Mapped<T> {
+impl<T: CommonBuffer> DerefMut for MappedSparse<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+pub struct DenseMapped2d<T: CommonBuffer> {
+    inner: Growable<T>,
+    columns: Vec<ColumnMeta<T::Item>>,
+
+    #[cfg(debug_assertions)]
+    label: String,
+}
+
+struct ColumnMeta<T> {
+    capacity: usize,
+    index_offset: usize,
+    changes: Vec<ColumnOp<T>>,
+    ids: DenseIdAllocator,
+}
+
+enum ColumnOp<T> {
+    Insert(T, DenseId),
+    Remove(DenseArrayOp),
+}
+
+pub struct Slot2dId {
+    pub row_id: u16,
+    pub dense: DenseId,
+}
+
+#[derive(Debug)]
+pub enum ColumnChange {
+    Moved { new_offset: usize },
+    Resized { new_size: usize },
+}
+
+impl<T: CommonBuffer + WriteBuffer> DenseMapped2d<T>
+where
+    T::Item: NoUninit,
+{
+    pub fn new(
+        label: &str,
+        ctx: &GraphicsCtx,
+        data: impl Borrow<[T::Item]>,
+        columns_size: impl IntoIterator<Item = u16>,
+    ) -> Self {
+        let data = data.borrow();
+        let inner = T::new_vec(label, ctx, data);
+        let mut offset_acc = 0;
+        Self {
+            inner,
+            columns: columns_size
+                .into_iter()
+                .map(|c| ColumnMeta {
+                    capacity: c as usize,
+                    index_offset: {
+                        let r = offset_acc;
+                        offset_acc += c as usize;
+                        r
+                    },
+                    changes: vec![],
+                    ids: DenseIdAllocator::new_packed(c as u32),
+                })
+                .collect(),
+            #[cfg(debug_assertions)]
+            label: label.to_string(),
+        }
+    }
+
+    pub fn push(&mut self, column_id: u16, value: T::Item) -> Slot2dId {
+        let column = &mut self.columns[column_id as usize];
+        let id = column.ids.allocate();
+        column.changes.push(ColumnOp::Insert(value, id));
+        Slot2dId {
+            row_id: column_id,
+            dense: id,
+        }
+    }
+
+    pub fn remove(&mut self, id: Slot2dId) {
+        let column = &mut self.columns[id.row_id as usize];
+        if let Some(array_op) = column.ids.free(id.dense) {
+            column.changes.push(ColumnOp::Remove(array_op));
+        }
+    }
+
+    //Todo: use
+    pub fn apply_changes(&mut self, ctx: &GraphicsCtx) -> (bool, Vec<(u16, ColumnChange)>) {
+        let mut changes = Vec::new(); // can only be computed from sent operations!
+
+        let old_capacities = self.columns.iter().map(|c| c.capacity).collect::<Vec<_>>();
+        let ttl_old_capacity = old_capacities.iter().sum::<usize>();
+        let ttl_new_capacity = self
+            .columns
+            .iter_mut()
+            .map(|column| {
+                if column.ids.len() > column.capacity {
+                    column.capacity = (column.capacity.max(1) * 2).max(column.ids.len());
+                };
+
+                column.capacity
+            })
+            .sum::<usize>();
+
+        if ttl_new_capacity > ttl_old_capacity {
+            // create new_buffer for grow
+            let new_buffer = T::new_empty_vec(&self.label, ctx, ttl_new_capacity);
+            let mut encoder = ctx
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Mapped2d Growable Buffer Copy Encoder"),
+                });
+
+            #[derive(Debug)]
+            struct SubBufferMove {
+                old_offset: usize,
+                new_offset: usize,
+                size: usize,
+            }
+
+            let mut rest = SubBufferMove {
+                old_offset: 0,
+                new_offset: 0,
+                size: ttl_old_capacity,
+            };
+            let (mut old_cap_acc, mut new_cap_acc) = (0, 0); // Block size
+            let mut prev_offset = 0;
+
+            for ((column_id, column), old_cap) in
+                self.columns.iter_mut().enumerate().zip(old_capacities)
+            {
+                let new_cap = column.capacity;
+                let grow = new_cap > old_cap;
+
+                old_cap_acc += old_cap;
+                new_cap_acc += new_cap;
+                if grow {
+                    encoder.copy_buffer_to_buffer(
+                        self.inner.inner(),
+                        rest.old_offset as u64 * T::ITEM_BYTE_SIZE,
+                        new_buffer.inner(),
+                        rest.new_offset as u64 * T::ITEM_BYTE_SIZE,
+                        old_cap_acc as u64 * T::ITEM_BYTE_SIZE,
+                    );
+                    rest = SubBufferMove {
+                        old_offset: rest.old_offset + old_cap_acc,
+                        new_offset: rest.new_offset + new_cap_acc,
+                        size: rest.size - old_cap_acc,
+                    };
+
+                    new_cap_acc = 0;
+                    old_cap_acc = 0;
+                }
+
+                // skip first columns before first update
+                if changes.len() > 0 || grow {
+                    column.index_offset = prev_offset;
+                    changes.push((
+                        column_id as u16,
+                        ColumnChange::Moved {
+                            new_offset: prev_offset,
+                        },
+                    ));
+                    prev_offset += new_cap;
+                }
+            }
+
+            encoder.copy_buffer_to_buffer(
+                self.inner.inner(),
+                rest.old_offset as u64 * T::ITEM_BYTE_SIZE,
+                new_buffer.inner(),
+                rest.new_offset as u64 * T::ITEM_BYTE_SIZE,
+                rest.size as u64 * T::ITEM_BYTE_SIZE,
+            );
+
+            ctx.queue.submit(Some(encoder.finish()));
+            self.inner = new_buffer;
+        }
+
+        for (column_id, column) in self.columns.iter_mut().enumerate() {
+            let mut size_diff = 0;
+            for op in column.changes.drain(..) {
+                match op {
+                    ColumnOp::Insert(value, id) => {
+                        if let Some(idx) = column.ids.get_index(id) {
+                            size_diff += 1;
+                            self.inner.write_at_index(
+                                ctx,
+                                &value,
+                                column.index_offset as u32 + idx,
+                            );
+                        }
+                    }
+                    ColumnOp::Remove(op) => {
+                        size_diff -= 1;
+                        match op {
+                            DenseArrayOp::RemoveLast {} => (),
+                            DenseArrayOp::SwapRemove { index, last } => {
+                                self.inner.swap_at_indices(ctx, index, last);
+                            }
+                        }
+                    }
+                }
+                if size_diff != 0 {
+                    changes.push((
+                        column_id as u16,
+                        ColumnChange::Resized {
+                            new_size: column.ids.len() as usize,
+                        },
+                    ));
+                }
+            }
+        }
+
+        (false, changes)
+    }
+}
+
+impl<T: CommonBuffer> Deref for DenseMapped2d<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T: CommonBuffer> DerefMut for DenseMapped2d<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
