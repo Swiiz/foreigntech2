@@ -1,7 +1,7 @@
 use std::cell::LazyCell;
 
 use buffer::{CommonBuffer, UniformBuffer, WriteBuffer};
-use camera::{view_proj_bindgroup, Projection, View};
+use camera::{view_proj_bindgroup, Camera, Projection};
 use color::Color3;
 use ctx::{Frame, GraphicsCtx};
 
@@ -100,8 +100,8 @@ impl GlobalRenderer {
         self.depth_texture = TextureWrapper::new_depth("3d", ctx, ctx.viewport_size);
     }
 
-    pub fn update_view(&self, ctx: &GraphicsCtx, view: &View) -> () {
-        self.view.write(ctx, &view.compute_matrix());
+    pub fn update_view(&self, ctx: &GraphicsCtx, view: &Camera) -> () {
+        self.view.write(ctx, &view.compute_view_matrix());
     }
 
     pub fn update_proj(&self, ctx: &GraphicsCtx, proj: &Projection) -> () {

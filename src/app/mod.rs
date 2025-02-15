@@ -6,7 +6,7 @@ use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
     event_loop::{self, ActiveEventLoop},
-    window::{Window, WindowAttributes},
+    window::{CursorGrabMode, Window, WindowAttributes},
 };
 
 use crate::{
@@ -99,10 +99,20 @@ impl App {
     fn update(&mut self) {
         let dt = self.last_update.elapsed();
         self.last_update = Instant::now();
+        if self.game_state.paused {
+            self.window.set_cursor_grab(CursorGrabMode::None).unwrap();
+            self.window.set_cursor_visible(true);
+        } else {
+            self.window
+                .set_cursor_grab(CursorGrabMode::Confined)
+                .or_else(|_e| self.window.set_cursor_grab(CursorGrabMode::Locked))
+                .unwrap();
+            self.window.set_cursor_visible(false);
+        }
         self.game_state.update(&self.inputs, dt);
 
         self.renderer
-            .update_view(&self.graphics, &self.game_state.view);
+            .update_view(&self.graphics, &self.game_state.camera);
         self.inputs.step();
     }
 

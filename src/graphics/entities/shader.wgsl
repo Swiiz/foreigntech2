@@ -62,12 +62,13 @@ fn vs_main(
         instance.model_matrix_2,
         instance.model_matrix_3,
     );
-    let position = model * vec4<f32>(vertex.position, 1.0);
+    let position = vec4<f32>(vertex.position, 1.0);
+    let mvp = proj * view * model;
 
     var out: VertexOutput;
     out.normal = vertex.normal;
     out.tex_coords = vertex.tex_coords;
-    out.clip_position = proj * view * position;
+    out.clip_position = mvp * position;
     out.position = position.xyz;
     out.material_id = instance.material_id;
     return out;

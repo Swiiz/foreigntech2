@@ -1,54 +1,50 @@
 use std::time::Duration;
 
-use nalgebra::Vector3;
+use nalgebra::{Rotation3, Vector3, Vector4};
 use winit::keyboard::KeyCode;
 
-use crate::{app::inputs::Inputs, graphics::camera::View};
+use crate::{app::inputs::Inputs, graphics::camera::Camera};
 
 pub struct GameState {
-    pub view: View,
+    pub camera: Camera,
+    pub paused: bool,
 }
 
 impl GameState {
     pub fn new() -> Self {
         Self {
-            view: View::default(),
+            camera: Camera::default(),
+            paused: false,
         }
     }
 
     pub fn update(&mut self, inputs: &Inputs, dt: Duration) -> () {
         let (dx, dy) = inputs.mouse_diff();
 
-        let sensitivity = 0.5;
-        let speed = 2.0;
+        let sensitivity = 2.;
+        let speed = 3.;
 
         let dts = dt.as_secs_f32();
+        if !self.paused {
+            self.camera.yaw_deg -= dx * sensitivity * dts;
+            self.camera.pitch_deg =
+                (self.camera.pitch_deg - dy * sensitivity * dts).clamp(-90., 90.);
+        }
 
-        /*self.view.pitch_deg += dy * sensitivity * dts;
-        self.view.yaw_deg += dx * sensitivity * dts; */
+        #[rustfmt::skip]
+        let (forward, right, up) =(
+            if inputs.key_held(KeyCode::KeyW) { 1. } else { 0. } + if inputs.key_held(KeyCode::KeyS) { -1. } else { 0. },
+            if inputs.key_held(KeyCode::KeyD) { 1. } else { 0. } + if inputs.key_held(KeyCode::KeyA) { -1. } else { 0. },
+            if inputs.key_held(KeyCode::Space) { 1. } else { 0. } + if inputs.key_held(KeyCode::ShiftLeft) { -1. } else { 0. },
+        );
 
-        let (yaw_sin, yaw_cos) = (self.view.yaw_deg - 90.).to_radians().sin_cos();
-        let up = self.view.up * speed * dts;
-        let forward = Vector3::new(yaw_cos, 0.0, yaw_sin).normalize() * speed * dts;
-        let right = Vector3::new(-yaw_sin, 0.0, yaw_cos).normalize() * speed * dts;
+        let transl = Vector4::new(right, up, -forward, 0.);
+        let rot = Rotation3::from_axis_angle(&Vector3::y_axis(), self.camera.yaw_deg.to_radians())
+            .to_homogeneous();
+        self.camera.eye += (rot * transl).xyz() * speed * dts;
 
-        if inputs.key_held(KeyCode::KeyW) {
-            self.view.eye += forward;
-        }
-        if inputs.key_held(KeyCode::KeyS) {
-            self.view.eye -= forward;
-        }
-        if inputs.key_held(KeyCode::KeyD) {
-            self.view.eye += right;
-        }
-        if inputs.key_held(KeyCode::KeyA) {
-            self.view.eye -= right;
-        }
-        if inputs.key_held(KeyCode::Space) {
-            self.view.eye += up;
-        }
-        if inputs.key_held(KeyCode::ShiftLeft) {
-            self.view.eye -= up;
+        if inputs.key_pressed(KeyCode::Escape) {
+            self.paused = !self.paused;
         }
     }
 }

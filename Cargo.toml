@@ -26,3 +26,9 @@ nd_iter = "0.0.4"
 asset_tree = { git = "https://github.com/Swiiz/asset_tree" }
 guillotiere = "0.6.2"
 image = { version = "0.25.5", features = ["png"], default-features = false }
+
+## Faster compile 
+[profile.dev.package."*"]
+opt-level = 3
+[profile.dev.build-override]
+opt-level = 3

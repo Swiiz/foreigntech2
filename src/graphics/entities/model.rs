@@ -17,13 +17,10 @@ use crate::{
         color::Color3,
         ctx::GraphicsCtx,
     },
-    utils::DenseArrayOp,
     ASSETS,
 };
 
 use super::EntityModel;
-
-pub struct ModelsAllocator {}
 
 pub struct ModelsBuffer {
     pub(super) vertex_buffer: VertexBuffer<ModelVertex>,
@@ -31,21 +28,8 @@ pub struct ModelsBuffer {
     pub(super) instance_buffer: DenseMapped2d<InstanceBuffer<ModelInstance>>,
     pub(super) indirect_buffer: IndirectBuffer,
 
+    models_column_id: Vec<u16>,
     instances_count: Vec<Vec<u16>>,
-    triangles_count: u32,
-}
-
-enum InstancesChange {
-    Add {
-        model_id: u16,
-        mesh_id: u16,
-        instance: ModelInstance,
-        alloc_len: u32,
-    },
-    Remove {
-        id: ModelInstanceId,
-        array_op: DenseArrayOp,
-    },
 }
 
 pub struct ModelInstanceId {
@@ -79,8 +63,18 @@ impl ModelsBuffer {
             index_buffer,
             instance_buffer,
             indirect_buffer,
+            models_column_id: {
+                let mut acc = 0;
+                instances_count
+                    .iter()
+                    .map(|m| {
+                        let id = acc;
+                        acc += m.len() as u16;
+                        id
+                    })
+                    .collect()
+            },
             instances_count,
-            triangles_count: indices.len() as u32 / 3 * instances.len() as u32,
         }
     }
 
@@ -199,21 +193,13 @@ impl ModelsBuffer {
         )
     }
 
-    pub fn triangles_count(&self) -> u32 {
-        self.triangles_count
-    }
-
     pub fn add_instance(
         &mut self,
         model_id: u16,
         mesh_id: u16,
         instance: ModelInstance,
     ) -> ModelInstanceId {
-        let column_id = self.instances_count[..model_id as usize]
-            .iter()
-            .flatten()
-            .sum::<u16>()
-            + mesh_id as u16;
+        let column_id = self.models_column_id[model_id as usize] + mesh_id;
         let instance_id = self.instance_buffer.push(column_id, instance);
         self.instances_count[model_id as usize][mesh_id as usize] += 1;
 
@@ -224,16 +210,25 @@ impl ModelsBuffer {
         }
     }
 
+    pub fn instance_count(&self) -> u32 {
+        self.instances_count[..].iter().flatten().sum::<u16>() as u32
+    }
+
     pub fn remove_instance(&mut self, id: ModelInstanceId) {
         self.instance_buffer.remove(id.instance_id);
         self.instances_count[id.model_id as usize][id.mesh_id as usize] -= 1;
     }
 
     pub fn model_count(&self) -> u32 {
-        self.instances_count[..]
-            .iter()
-            .map(|m| m.len())
-            .sum::<usize>() as u32
+        self.instances_count.len() as u32
+    }
+
+    pub fn mesh_count(&self) -> u32 {
+        self.instances_count.iter().map(|m| m.len()).sum::<usize>() as u32
+    }
+
+    pub fn mesh_count_of(&self, model_id: u16) -> u32 {
+        self.instances_count[model_id as usize].len() as u32
     }
 
     //TODO: Use staging belt please
@@ -348,6 +343,7 @@ impl ModelInstance {
 pub struct MaterialsBuffer {
     pub storage_buffer: StorageBuffer<Material>,
     pub bind_group: wgpu::BindGroup,
+    pub len: u32,
 }
 
 impl MaterialsBuffer {
@@ -366,7 +362,12 @@ impl MaterialsBuffer {
         Self {
             storage_buffer,
             bind_group,
+            len: materials.len() as u32,
         }
+    }
+
+    pub fn len(&self) -> u32 {
+        self.len
     }
 }
 

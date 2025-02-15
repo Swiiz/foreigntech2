@@ -540,6 +540,8 @@ pub struct DenseMapped2d<T: CommonBuffer> {
     inner: Growable<T>,
     columns: Vec<ColumnMeta<T::Item>>,
 
+    ttl_capacity: usize,
+
     #[cfg(debug_assertions)]
     label: String,
 }
@@ -556,6 +558,7 @@ enum ColumnOp<T> {
     Remove(DenseArrayOp),
 }
 
+#[derive(Debug)]
 pub struct Slot2dId {
     pub row_id: u16,
     pub dense: DenseId,
@@ -595,6 +598,8 @@ where
                     ids: DenseIdAllocator::new_packed(c as u32),
                 })
                 .collect(),
+            ttl_capacity: data.len(),
+
             #[cfg(debug_assertions)]
             label: label.to_string(),
         }
@@ -617,26 +622,22 @@ where
         }
     }
 
-    //Todo: use
     pub fn apply_changes(&mut self, ctx: &GraphicsCtx) -> (bool, Vec<(u16, ColumnChange)>) {
-        let mut changes = Vec::new(); // can only be computed from sent operations!
-
-        let old_capacities = self.columns.iter().map(|c| c.capacity).collect::<Vec<_>>();
-        let ttl_old_capacity = old_capacities.iter().sum::<usize>();
-        let ttl_new_capacity = self
+        let mut changes = Vec::new();
+        let new_capacities = self
             .columns
-            .iter_mut()
-            .map(|column| {
-                if column.ids.len() > column.capacity {
-                    column.capacity = (column.capacity.max(1) * 2).max(column.ids.len());
-                };
-
-                column.capacity
+            .iter()
+            .map(|c| {
+                if c.ids.len() > c.capacity {
+                    (c.capacity.max(1) * 2).max(c.ids.len())
+                } else {
+                    c.capacity
+                }
             })
-            .sum::<usize>();
+            .collect::<Box<_>>();
+        let ttl_new_capacity = new_capacities.iter().sum::<usize>();
 
-        if ttl_new_capacity > ttl_old_capacity {
-            // create new_buffer for grow
+        if ttl_new_capacity > self.ttl_capacity {
             let new_buffer = T::new_empty_vec(&self.label, ctx, ttl_new_capacity);
             let mut encoder = ctx
                 .device
@@ -645,48 +646,48 @@ where
                 });
 
             #[derive(Debug)]
-            struct SubBufferMove {
+            struct MoveBlock {
                 old_offset: usize,
                 new_offset: usize,
                 size: usize,
             }
 
-            let mut rest = SubBufferMove {
+            let mut rest = MoveBlock {
                 old_offset: 0,
                 new_offset: 0,
-                size: ttl_old_capacity,
+                size: self.ttl_capacity,
             };
-            let (mut old_cap_acc, mut new_cap_acc) = (0, 0); // Block size
+            let (mut old_block_size, mut new_block_size) = (0, 0); // Block size
             let mut prev_offset = 0;
+            let mut move_needed = false;
 
-            for ((column_id, column), old_cap) in
-                self.columns.iter_mut().enumerate().zip(old_capacities)
-            {
-                let new_cap = column.capacity;
+            for (column_id, column) in self.columns.iter_mut().enumerate() {
+                let old_cap = column.capacity;
+                let new_cap = new_capacities[column_id];
                 let grow = new_cap > old_cap;
 
-                old_cap_acc += old_cap;
-                new_cap_acc += new_cap;
+                old_block_size += old_cap;
+                new_block_size += new_cap;
                 if grow {
                     encoder.copy_buffer_to_buffer(
                         self.inner.inner(),
                         rest.old_offset as u64 * T::ITEM_BYTE_SIZE,
                         new_buffer.inner(),
                         rest.new_offset as u64 * T::ITEM_BYTE_SIZE,
-                        old_cap_acc as u64 * T::ITEM_BYTE_SIZE,
+                        old_block_size as u64 * T::ITEM_BYTE_SIZE,
                     );
-                    rest = SubBufferMove {
-                        old_offset: rest.old_offset + old_cap_acc,
-                        new_offset: rest.new_offset + new_cap_acc,
-                        size: rest.size - old_cap_acc,
+                    rest = MoveBlock {
+                        old_offset: rest.old_offset + old_block_size,
+                        new_offset: rest.new_offset + new_block_size,
+                        size: rest.size - old_block_size,
                     };
 
-                    new_cap_acc = 0;
-                    old_cap_acc = 0;
+                    new_block_size = 0;
+                    old_block_size = 0;
                 }
 
                 // skip first columns before first update
-                if changes.len() > 0 || grow {
+                if move_needed {
                     column.index_offset = prev_offset;
                     changes.push((
                         column_id as u16,
@@ -694,8 +695,10 @@ where
                             new_offset: prev_offset,
                         },
                     ));
-                    prev_offset += new_cap;
+                } else if grow {
+                    move_needed = true;
                 }
+                prev_offset += new_cap;
             }
 
             encoder.copy_buffer_to_buffer(
@@ -743,6 +746,11 @@ where
                     ));
                 }
             }
+        }
+
+        self.ttl_capacity = ttl_new_capacity;
+        for (i, new_cap) in IntoIterator::into_iter(new_capacities).enumerate() {
+            self.columns[i].capacity = new_cap;
         }
 
         (false, changes)

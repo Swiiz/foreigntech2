@@ -1,6 +1,4 @@
-use nalgebra::{
-    Matrix4, Perspective3, Point3, Vector3, Vector4,
-};
+use nalgebra::{Matrix4, Perspective3, Point3, Quaternion, Rotation3, Vector3, Vector4};
 
 use crate::constants;
 
@@ -14,7 +12,7 @@ const OPENGL_TO_WGPU_MATRIX: Matrix4<f32> = Matrix4::new(
     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 1.0,
 );
 
-pub struct View {
+pub struct Camera {
     pub eye: Point3<f32>,
     pub pitch_deg: f32,
     pub yaw_deg: f32,
@@ -22,7 +20,7 @@ pub struct View {
     pub up: Vector3<f32>,
 }
 
-impl Default for View {
+impl Default for Camera {
     fn default() -> Self {
         Self {
             eye: Point3::new(0.0, 1.0, 2.0),
@@ -34,14 +32,16 @@ impl Default for View {
     }
 }
 
-impl View {
-    pub fn compute_matrix(&self) -> Matrix4<f32> {
-        (Matrix4::new_rotation(-Vector3::new(
-            self.yaw_deg.to_radians(),
-            self.pitch_deg.to_radians(),
-            self.roll_deg.to_radians(),
-        )) * Matrix4::new_translation(&-Vector4::from(self.eye).xyz()))
-        .into()
+impl Camera {
+    pub fn compute_view_matrix(&self) -> Matrix4<f32> {
+        self.compute_rot_matrix() * Matrix4::new_translation(&-Vector4::from(self.eye).xyz())
+    }
+
+    pub fn compute_rot_matrix(&self) -> Matrix4<f32> {
+        (Rotation3::from_axis_angle(&Vector3::x_axis(), -self.pitch_deg.to_radians())
+            * Rotation3::from_axis_angle(&Vector3::y_axis(), -self.yaw_deg.to_radians())
+            * Rotation3::from_axis_angle(&Vector3::z_axis(), -self.roll_deg.to_radians()))
+        .to_homogeneous()
     }
 }
 

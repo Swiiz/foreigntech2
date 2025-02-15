@@ -14,9 +14,10 @@ pub struct AtlasPacker {
 }
 
 pub struct AtlasUniform {
+    /*
     packer: AtlasAllocator,
     texture: TextureWrapper,
-    uvs_buffer: StorageBuffer<[[f32; 2]; 2]>,
+    uvs_buffer: StorageBuffer<[[f32; 2]; 2]>, */
     pub bind_group: wgpu::BindGroup,
 }
 
@@ -102,9 +103,10 @@ impl AtlasPacker {
         });
 
         AtlasUniform {
+            /*
             packer: self.atlas.clone(),
             texture,
-            uvs_buffer,
+            uvs_buffer, */
             bind_group,
         }
     }

@@ -1,17 +1,16 @@
-
 use nalgebra::{Matrix4, Vector3};
 use nd_iter::iter_3d;
 use wgpu::{include_wgsl, DepthStencilState};
 
 use crate::graphics::{
-        atlas::{atlas_uniform_bind_group_layout, AtlasPacker, AtlasUniform},
-        buffer::CommonBuffer,
-        camera::view_proj_bind_group_layout,
-        ctx::GraphicsCtx,
-        entities::model::materials_buffer_bind_group_layout,
-        light::{lights_buffer_bind_group_layout, LightsBuffer},
-        utils::TextureWrapper,
-    };
+    atlas::{atlas_uniform_bind_group_layout, AtlasPacker, AtlasUniform},
+    buffer::CommonBuffer,
+    camera::view_proj_bind_group_layout,
+    ctx::GraphicsCtx,
+    entities::model::materials_buffer_bind_group_layout,
+    light::{lights_buffer_bind_group_layout, LightsBuffer},
+    utils::TextureWrapper,
+};
 
 use super::model::{load_model, MaterialsBuffer, ModelInstance, ModelVertex, ModelsBuffer};
 
@@ -95,7 +94,10 @@ impl EntitiesRenderer {
         let textures = [astronaut.textures, earth.textures].concat();
         let entities = [
             (&astronaut.meshes, vec![single_instance(0)]),
-            (&earth.meshes, vec![single_instance(1), single_instance(2)]),
+            (
+                &earth.meshes,
+                vec![stress_test_instances(1), stress_test_instances(2)],
+            ),
         ];
 
         let models = ModelsBuffer::new(ctx, entities);
@@ -130,7 +132,7 @@ impl EntitiesRenderer {
         render_pass.multi_draw_indexed_indirect(
             &self.models.indirect_buffer.inner(),
             0,
-            self.models.model_count(),
+            self.models.mesh_count(),
         );
     }
 

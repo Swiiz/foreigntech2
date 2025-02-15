@@ -20,7 +20,9 @@ pub struct Editor {
     pub light_editor: LightEditor,
 
     pub new_inst_pos: Point3<f32>,
-    pub inst_id: u32,
+    pub mat_id: u32,
+    pub model_id: u32,
+    pub mesh_id: u32,
 }
 
 impl Editor {
@@ -41,7 +43,9 @@ impl Editor {
             gui_ctx,
             light_editor,
             new_inst_pos: Default::default(),
-            inst_id: 0,
+            mat_id: 0,
+            model_id: 0,
+            mesh_id: 0,
         }
     }
 
@@ -56,16 +60,16 @@ impl Editor {
             egui::Window::new("Editor window").show(gui_ctx, |ui| {
                 ui.collapsing("View", |ui| {
                     ui.label("Eye: ");
-                    point_slider(ui, &mut game_state.view.eye, -10.0..=10.0);
+                    point_slider(ui, &mut game_state.camera.eye, -10.0..=10.0);
                     ui.label("Up: ");
-                    vec3_slider(ui, &mut game_state.view.up);
+                    vec3_slider(ui, &mut game_state.camera.up);
                     ui.label("Angle: ");
                     angle_slider(
                         ui,
                         (
-                            &mut game_state.view.yaw_deg,
-                            &mut game_state.view.pitch_deg,
-                            &mut game_state.view.roll_deg,
+                            &mut game_state.camera.yaw_deg,
+                            &mut game_state.camera.pitch_deg,
+                            &mut game_state.camera.roll_deg,
                         ),
                     );
                 });
@@ -79,49 +83,39 @@ impl Editor {
 
                 ui.collapsing("Instances", |ui| {
                     point_slider(ui, &mut self.new_inst_pos, -10.0..=10.);
+                    ui.add(
+                        Slider::new(
+                            &mut self.mat_id,
+                            0..=renderer.entities.materials.len() as u32 - 1,
+                        )
+                        .text("Material ID"),
+                    );
+                    ui.add(
+                        Slider::new(
+                            &mut self.model_id,
+                            0..=renderer.entities.models.model_count() as u32 - 1,
+                        )
+                        .text("Model ID"),
+                    );
+                    ui.add(
+                        Slider::new(
+                            &mut self.mesh_id,
+                            0..=renderer.entities.models.mesh_count_of(self.model_id as u16) as u32
+                                - 1,
+                        )
+                        .text("Mesh ID"),
+                    );
                     if ui.button("Push").clicked() {
                         renderer.entities.models.add_instance(
-                            0,
-                            0,
+                            self.model_id as u16,
+                            self.mesh_id as u16,
                             ModelInstance {
                                 transform: Matrix4::new_translation(&self.new_inst_pos.coords)
                                     .into(),
-                                material_id: 0,
+                                material_id: self.mat_id,
                             },
                         );
                     }
-
-                    /*
-                    ui.label(format!(
-                        "Instance count: {}",
-                        renderer.entities.models.instances_count(),
-                    ));
-
-                    let count = renderer.entities.models.instances_count();
-                    if count > 0 {
-                        ui.separator();
-                        ui.label("Instance id to modify: ");
-
-                        if count < 100 {
-                            ComboBox::from_label("DenseId").show_ui(ui, |ui| {
-                                for inst in renderer.entities.models.get_instance_alloc(0, 0).iter()
-                                {
-                                    ui.selectable_value(
-                                        &mut self.inst_id,
-                                        inst.raw(),
-                                        format!("{}", inst.raw()),
-                                    );
-                                }
-                            });
-                            if ui.button("Remove").clicked() {
-                                renderer.entities.models.remove_instance(ModelInstanceId {
-                                    model_id: 0,
-                                    mesh_id: 0,
-                                    instance_id: DenseId::from_raw(self.inst_id),
-                                });
-                            }
-                        }
-                    } */
                 })
             });
         });
@@ -168,17 +162,17 @@ fn vec3_slider(ui: &mut egui::Ui, value: &mut Vector3<f32>) {
 
 fn angle_slider(ui: &mut egui::Ui, (yaw, pitch, roll): (&mut f32, &mut f32, &mut f32)) {
     ui.add(
-        Slider::new(yaw, -180.0..=180.0)
+        Slider::new(yaw, -90.0..=90.0)
             .text("Yaw")
             .text_color(Color32::RED),
     );
     ui.add(
-        Slider::new(pitch, -180.0..=180.0)
+        Slider::new(pitch, -90.0..=90.0)
             .text("Pitch")
             .text_color(Color32::GREEN),
     );
     ui.add(
-        Slider::new(roll, -180.0..=180.0)
+        Slider::new(roll, -90.0..=90.0)
             .text("Roll")
             .text_color(Color32::CYAN),
     );
