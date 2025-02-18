@@ -112,13 +112,14 @@ impl App {
         self.game_state.update(&self.inputs, dt);
 
         self.renderer
+            .camera
             .update_view(&self.graphics, &self.game_state.camera);
         self.inputs.step();
     }
 
     fn resize_viewport(&mut self) {
         self.proj.aspect_ratio = self.window.scale_factor() as f32;
-        self.renderer.update_proj(&self.graphics, &self.proj);
+        self.renderer.camera.update_proj(&self.graphics, &self.proj);
 
         self.graphics.resize(self.window.inner_size().into());
         self.renderer.update_viewport_size(&self.graphics);

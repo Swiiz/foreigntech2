@@ -1,7 +1,7 @@
 use std::cell::LazyCell;
 
 use buffer::{CommonBuffer, UniformBuffer, WriteBuffer};
-use camera::{view_proj_bindgroup, Camera, Projection};
+use camera::{view_proj_bindgroup, Camera, CameraUniform};
 use color::Color3;
 use ctx::{Frame, GraphicsCtx};
 
@@ -9,8 +9,9 @@ pub use egui::FullOutput as EguiOutput;
 pub use egui_wgpu::Renderer as EguiRenderer;
 use egui_wgpu::ScreenDescriptor;
 use entities::renderer::EntitiesRenderer;
-use light::{Light, LightsBuffer, RawLight};
+use light::{Light, LightsUniform, RawLight};
 use nalgebra::{Matrix4, Point3, Vector3};
+use terrain::TerrainRenderer;
 use utils::TextureWrapper;
 
 pub mod assets;
@@ -21,16 +22,16 @@ pub mod color;
 pub mod ctx;
 pub mod entities;
 pub mod light;
+pub mod terrain;
 pub mod utils;
 
 pub struct GlobalRenderer {
     egui: EguiRenderer,
+    pub terrain: TerrainRenderer,
     pub entities: EntitiesRenderer,
-    pub lights: LightsBuffer,
 
-    view: UniformBuffer<Matrix4<f32>>,
-    proj: UniformBuffer<Matrix4<f32>>,
-    view_proj_bindgroup: wgpu::BindGroup,
+    pub lights: LightsUniform,
+    pub camera: CameraUniform,
 
     depth_texture: TextureWrapper,
 }
@@ -68,11 +69,8 @@ const TEST_LIGHTS: LazyCell<[RawLight; 3]> = LazyCell::new(|| {
 
 impl GlobalRenderer {
     pub fn new(ctx: &GraphicsCtx) -> Self {
-        let view = UniformBuffer::new("view", ctx, &Matrix4::identity());
-        let proj = UniformBuffer::new("camera", ctx, &Matrix4::identity());
-        let view_proj_bindgroup = view_proj_bindgroup(ctx, &view, &proj);
-
-        let lights = LightsBuffer::new(ctx, TEST_LIGHTS.as_ref());
+        let lights = LightsUniform::new(ctx, TEST_LIGHTS.as_ref());
+        let camera = CameraUniform::new(ctx);
 
         let depth_texture = TextureWrapper::new_depth("3d", ctx, ctx.viewport_size);
 
@@ -83,29 +81,22 @@ impl GlobalRenderer {
             1,
             false,
         );
-        let models = EntitiesRenderer::new(ctx);
+
+        let entities = EntitiesRenderer::new(ctx);
+        let terrain = TerrainRenderer::new(ctx, &camera);
 
         Self {
             egui,
-            entities: models,
-            view,
-            proj,
-            view_proj_bindgroup,
+            entities,
+            terrain,
             lights,
+            camera,
             depth_texture,
         }
     }
 
     pub fn update_viewport_size(&mut self, ctx: &GraphicsCtx) {
         self.depth_texture = TextureWrapper::new_depth("3d", ctx, ctx.viewport_size);
-    }
-
-    pub fn update_view(&self, ctx: &GraphicsCtx, view: &Camera) -> () {
-        self.view.write(ctx, &view.compute_view_matrix());
-    }
-
-    pub fn update_proj(&self, ctx: &GraphicsCtx, proj: &Projection) -> () {
-        self.proj.write(ctx, &proj.compute_matrix());
     }
 
     pub fn submit(&mut self, ctx: &GraphicsCtx, render_state: RenderData) {
@@ -116,8 +107,9 @@ impl GlobalRenderer {
             let mut render_pass =
                 clear_color_render_pass(&mut frame, Some(&self.depth_texture)).forget_lifetime();
 
+            render_pass.execute_bundles([&self.terrain.render_bundle]);
             self.entities
-                .render(&mut render_pass, &self.view_proj_bindgroup, &self.lights);
+                .render(&mut render_pass, &self.camera, &self.lights);
 
             render_egui(
                 &mut self.egui,

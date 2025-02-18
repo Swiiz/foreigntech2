@@ -5,10 +5,10 @@ use wgpu::{include_wgsl, DepthStencilState};
 use crate::graphics::{
     atlas::{atlas_uniform_bind_group_layout, AtlasPacker, AtlasUniform},
     buffer::CommonBuffer,
-    camera::view_proj_bind_group_layout,
+    camera::{view_proj_bind_group_layout, CameraUniform},
     ctx::GraphicsCtx,
     entities::model::materials_buffer_bind_group_layout,
-    light::{lights_buffer_bind_group_layout, LightsBuffer},
+    light::{lights_buffer_bind_group_layout, LightsUniform},
     utils::TextureWrapper,
 };
 
@@ -115,11 +115,11 @@ impl EntitiesRenderer {
     pub fn render(
         &mut self,
         render_pass: &mut wgpu::RenderPass<'static>,
-        view_proj_bindgroup: &wgpu::BindGroup,
-        lights: &LightsBuffer,
+        camera: &CameraUniform,
+        lights: &LightsUniform,
     ) {
         render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, view_proj_bindgroup, &[]);
+        render_pass.set_bind_group(0, &camera.view_proj_bindgroup, &[]);
         render_pass.set_bind_group(1, &self.materials.bind_group, &[]);
         render_pass.set_bind_group(2, &self.atlas.bind_group, &[]);
         render_pass.set_bind_group(3, &lights.bind_group, &[]);

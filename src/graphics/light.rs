@@ -5,13 +5,13 @@ use super::{
     color::Color3,
 };
 
-pub struct LightsBuffer {
+pub struct LightsUniform {
     pub storage_buffer: MappedSparse<StorageBuffer<RawLight>>,
     count_uniform: super::UniformBuffer<u32>,
     pub bind_group: wgpu::BindGroup,
 }
 
-impl LightsBuffer {
+impl LightsUniform {
     pub fn new(ctx: &super::GraphicsCtx, lights: &[RawLight]) -> Self {
         let storage_buffer = MappedSparse::<StorageBuffer<_>>::new("Lights", ctx, lights);
         let count_uniform = super::UniformBuffer::new("lights_count", ctx, &(lights.len() as u32));
@@ -25,7 +25,7 @@ impl LightsBuffer {
         }
     }
 
-    /// Returns true if the bindgroup was recreated, thus requiring the renderbundle to be recreated
+    /// Returns true if the bindgroup was recreated
     pub fn apply_changes(&mut self, ctx: &super::GraphicsCtx) {
         if self.storage_buffer.apply_changes(ctx) {
             self.bind_group =

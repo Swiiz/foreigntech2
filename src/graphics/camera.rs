@@ -1,9 +1,9 @@
-use nalgebra::{Matrix4, Perspective3, Point3, Quaternion, Rotation3, Vector3, Vector4};
+use nalgebra::{Matrix4, Perspective3, Point3, Rotation3, Vector3, Vector4};
 
 use crate::constants;
 
 use super::{
-    buffer::{CommonBuffer, UniformBuffer},
+    buffer::{CommonBuffer, UniformBuffer, WriteBuffer},
     ctx::GraphicsCtx,
     utils::fovy,
 };
@@ -92,6 +92,35 @@ pub fn view_proj_bind_group_layout(ctx: &GraphicsCtx) -> wgpu::BindGroupLayout {
         })
 }
 
+pub fn inv_view_proj_bind_group_layout(ctx: &GraphicsCtx) -> wgpu::BindGroupLayout {
+    ctx.device
+        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+            label: Some("inv_view_proj_bind_group_layout"),
+        })
+}
+
 pub fn view_proj_bindgroup(
     ctx: &GraphicsCtx,
     view_buffer: &UniformBuffer<Matrix4<f32>>,
@@ -111,4 +140,55 @@ pub fn view_proj_bindgroup(
         ],
         label: Some("view_proj_bindgroup"),
     })
+}
+
+pub struct CameraUniform {
+    view: UniformBuffer<Matrix4<f32>>,
+    proj: UniformBuffer<Matrix4<f32>>,
+    inv_view: UniformBuffer<Matrix4<f32>>,
+    inv_proj: UniformBuffer<Matrix4<f32>>,
+    pub view_proj_bindgroup: wgpu::BindGroup,
+    pub inv_view_proj_bindgroup: wgpu::BindGroup,
+}
+
+impl CameraUniform {
+    pub fn new(ctx: &GraphicsCtx) -> Self {
+        let view_buffer = UniformBuffer::new("view", ctx, &Matrix4::identity());
+        let proj_buffer = UniformBuffer::new("camera", ctx, &Matrix4::identity());
+        let view_proj_bindgroup = view_proj_bindgroup(ctx, &view_buffer, &proj_buffer);
+
+        let inv_view_buffer = UniformBuffer::new("inv_view", ctx, &Matrix4::identity());
+        let inv_proj_buffer = UniformBuffer::new("inv_camera", ctx, &Matrix4::identity());
+        let inv_view_proj_bindgroup =
+            self::view_proj_bindgroup(ctx, &inv_view_buffer, &inv_proj_buffer);
+
+        Self {
+            view: view_buffer,
+            proj: proj_buffer,
+            inv_view: inv_view_buffer,
+            inv_proj: inv_proj_buffer,
+            view_proj_bindgroup,
+            inv_view_proj_bindgroup,
+        }
+    }
+
+    pub fn update_view(&mut self, ctx: &GraphicsCtx, camera: &Camera) {
+        let view = camera.compute_view_matrix();
+        self.view.write(ctx, &view);
+        self.inv_view.write(
+            ctx,
+            &view.try_inverse().expect("View matrix is not invertible"),
+        );
+    }
+
+    pub fn update_proj(&mut self, ctx: &GraphicsCtx, proj: &Projection) {
+        let proj = proj.compute_matrix();
+        self.proj.write(ctx, &proj);
+        self.inv_proj.write(
+            ctx,
+            &proj
+                .try_inverse()
+                .expect("Projection matrix is not invertible"),
+        );
+    }
 }
