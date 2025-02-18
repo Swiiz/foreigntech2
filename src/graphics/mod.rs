@@ -1,7 +1,7 @@
 use std::cell::LazyCell;
 
 use buffer::{CommonBuffer, UniformBuffer, WriteBuffer};
-use camera::{view_proj_bindgroup, Camera, CameraUniform};
+use camera::{Camera, CameraUniform};
 use color::Color3;
 use ctx::{Frame, GraphicsCtx};
 

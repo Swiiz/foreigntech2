@@ -1,15 +1,18 @@
-use nalgebra::{Matrix4, Perspective3, Point3, Rotation3, Vector3, Vector4};
+use nalgebra::{Matrix4, Perspective3, Point3, Rotation3, Vector2, Vector3, Vector4};
 
 use crate::constants;
 
 use super::{
     buffer::{CommonBuffer, UniformBuffer, WriteBuffer},
     ctx::GraphicsCtx,
-    utils::fovy,
 };
 
+#[rustfmt::skip]
 const OPENGL_TO_WGPU_MATRIX: Matrix4<f32> = Matrix4::new(
-    1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 0.0, 1.0,
+    1.0, 0.0, 0.0, 0.0, 
+    0.0, 1.0, 0.0, 0.0,
+    0.0, 0.0, 0.5, 0.5, 
+    0.0, 0.0, 0.0, 1.0,
 );
 
 pub struct Camera {
@@ -46,7 +49,7 @@ impl Camera {
 }
 
 pub struct Projection {
-    pub aspect_ratio: f32,
+    pub size: Vector2<u32>,
     pub fov_deg: f32,
 }
 
@@ -54,8 +57,8 @@ impl Projection {
     pub fn compute_matrix(&self) -> Matrix4<f32> {
         OPENGL_TO_WGPU_MATRIX
             * Perspective3::new(
-                self.aspect_ratio,
-                fovy(self.fov_deg, self.aspect_ratio),
+                self.size.x as f32 / self.size.y as f32,
+                self.fov_deg.to_radians(),
                 constants::MODEL_ZNEAR,
                 constants::MODE_ZFAR,
             )
@@ -116,12 +119,22 @@ pub fn inv_view_proj_bind_group_layout(ctx: &GraphicsCtx) -> wgpu::BindGroupLayo
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
             label: Some("inv_view_proj_bind_group_layout"),
         })
 }
 
-pub fn view_proj_bindgroup(
+fn view_proj_bindgroup(
     ctx: &GraphicsCtx,
     view_buffer: &UniformBuffer<Matrix4<f32>>,
     proj_buffer: &UniformBuffer<Matrix4<f32>>,
@@ -142,11 +155,40 @@ pub fn view_proj_bindgroup(
     })
 }
 
+fn inv_view_proj_bind_group(
+    ctx: &GraphicsCtx,
+    view_buffer: &UniformBuffer<Matrix4<f32>>,
+    proj_buffer: &UniformBuffer<Matrix4<f32>>,
+    size_buffer: &UniformBuffer<Vector2<u32>>,
+) -> wgpu::BindGroup {
+    ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        layout: &inv_view_proj_bind_group_layout(ctx),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: view_buffer.binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: proj_buffer.binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: size_buffer.binding(),
+            },
+        ],
+        label: Some("view_proj_bindgroup"),
+    })
+}
+
+/// Uniforms for view and projection matrices in vertex shader
+/// Inversed and screen size can also be used in fragment shader
 pub struct CameraUniform {
     view: UniformBuffer<Matrix4<f32>>,
     proj: UniformBuffer<Matrix4<f32>>,
     inv_view: UniformBuffer<Matrix4<f32>>,
     inv_proj: UniformBuffer<Matrix4<f32>>,
+    viewport_size: UniformBuffer<Vector2<u32>>,
     pub view_proj_bindgroup: wgpu::BindGroup,
     pub inv_view_proj_bindgroup: wgpu::BindGroup,
 }
@@ -159,14 +201,20 @@ impl CameraUniform {
 
         let inv_view_buffer = UniformBuffer::new("inv_view", ctx, &Matrix4::identity());
         let inv_proj_buffer = UniformBuffer::new("inv_camera", ctx, &Matrix4::identity());
-        let inv_view_proj_bindgroup =
-            self::view_proj_bindgroup(ctx, &inv_view_buffer, &inv_proj_buffer);
+        let viewport_size_buffer = UniformBuffer::new("viewport_size", ctx, &Vector2::new(0, 0));
+        let inv_view_proj_bindgroup = inv_view_proj_bind_group(
+            ctx,
+            &inv_view_buffer,
+            &inv_proj_buffer,
+            &viewport_size_buffer,
+        );
 
         Self {
             view: view_buffer,
             proj: proj_buffer,
             inv_view: inv_view_buffer,
             inv_proj: inv_proj_buffer,
+            viewport_size: viewport_size_buffer,
             view_proj_bindgroup,
             inv_view_proj_bindgroup,
         }
@@ -182,6 +230,7 @@ impl CameraUniform {
     }
 
     pub fn update_proj(&mut self, ctx: &GraphicsCtx, proj: &Projection) {
+        let size = proj.size;
         let proj = proj.compute_matrix();
         self.proj.write(ctx, &proj);
         self.inv_proj.write(
@@ -190,5 +239,6 @@ impl CameraUniform {
                 .try_inverse()
                 .expect("Projection matrix is not invertible"),
         );
+        self.viewport_size.write(ctx, &size);
     }
 }

@@ -1,9 +1,5 @@
 use crate::graphics::GraphicsCtx;
 
-pub fn fovy(fovx: f32, aspect: f32) -> f32 {
-    2.0 * (((fovx / 2.0).tan() / aspect).atan())
-}
-
 pub struct TextureWrapper {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,

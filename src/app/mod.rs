@@ -49,8 +49,9 @@ impl App {
 
         let inputs = Inputs::default();
         let graphics = GraphicsCtx::new(window.clone());
+        let (w, h) = window.inner_size().into();
         let proj = Projection {
-            aspect_ratio: 1.0,
+            size: [w, h].into(),
             fov_deg: 90.0,
         };
         let renderer = GlobalRenderer::new(&graphics);
@@ -118,10 +119,11 @@ impl App {
     }
 
     fn resize_viewport(&mut self) {
-        self.proj.aspect_ratio = self.window.scale_factor() as f32;
+        let (w, h): (u32, u32) = self.window.inner_size().into();
+        self.proj.size = [w, h].into();
         self.renderer.camera.update_proj(&self.graphics, &self.proj);
 
-        self.graphics.resize(self.window.inner_size().into());
+        self.graphics.resize((w, h));
         self.renderer.update_viewport_size(&self.graphics);
     }
 }
